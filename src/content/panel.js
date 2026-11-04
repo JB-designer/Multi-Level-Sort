@@ -1613,13 +1613,13 @@
     "button{font:inherit;color:inherit}",
     ":focus-visible{outline:2px solid var(--focus);outline-offset:1px}",
     ".ph{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:3;cursor:grab;user-select:none;touch-action:none}",
-    ".ph .logo{width:20px;height:20px;border-radius:5px;background:var(--button);color:var(--onAccent);flex:none;display:flex;align-items:center;justify-content:center}",
-    ".ph .logo svg{width:14px;height:14px}",
+    ".ph .logo{width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center}",
+    ".ph .logo svg{width:20px;height:20px}",
     ".ph .t{font-weight:600;flex:1}",
     ".ph .x{all:unset;cursor:pointer;color:var(--text3);width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex:none}",
     ".ph .x svg{width:16px;height:16px}",
     ".ph .x:hover{color:var(--text);background:var(--subtle)}",
-    ".bubble svg{width:16px;height:16px;flex:none}",
+    ".bubble svg{width:18px;height:18px;flex:none}",
     ".scope{padding:7px 12px;background:var(--subtle);font-size:12px;color:var(--text2);border-bottom:1px solid var(--border)}",
     ".pb{padding:12px}",
     ".lbl{font-size:12px;font-weight:600;color:var(--text2);margin:0 0 6px}",
@@ -1744,9 +1744,12 @@
     ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}"
   ].join("\n");
 
-  // 图标(线条来自 Lucide,ISC 许可):标题栏和收起胶囊用同一个排序标志;「–」= 收起,点胶囊 = 恢复
+  // 图标:标题栏和收起胶囊用产品图标(与 icons/icon.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
   var SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
-  var ICON_SORT = SVG_OPEN + ' stroke-width="2.2"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="M11 4h10"/><path d="M11 8h7"/><path d="M11 12h4"/></svg>';
+  var ICON_BRAND = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="2.1" fill="#344955"/>' +
+    '<rect x="2" y="3" width="12" height="10" rx="1.1" fill="#FCF8EE"/><rect x="3.45" y="5.15" width="5.3" height="1.7" rx="0.85" fill="#416E83"/>' +
+    '<rect x="4.7" y="9.15" width="3.55" height="1.7" rx="0.85" fill="#765989"/>' +
+    '<path d="M11.25 5.75 V10.25 M10 9.05 L11.25 10.25 12.5 9.05" fill="none" stroke="#344955" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   var ICON_MINUS = SVG_OPEN + ' stroke-width="2"><path d="M5 12h14"/></svg>';
 
   function buildPanel() {
@@ -1765,7 +1768,7 @@
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-label", t("name"));
     panel.innerHTML =
-      '<div class="ph"><span class="logo">' + ICON_SORT + '</span><span class="t">' + esc(t("name")) + '</span>' +
+      '<div class="ph"><span class="logo">' + ICON_BRAND + '</span><span class="t">' + esc(t("name")) + '</span>' +
       '  <button class="x" data-act="minimize" title="' + esc(t("minimize")) + '" aria-label="' + esc(t("minimize")) + '">' + ICON_MINUS + '</button></div>' +
       '<div class="scope" data-el="scope">' + esc(t("preparing")) + '</div>' +
       '<div class="pb">' +
@@ -1791,7 +1794,7 @@
 
     var bubble = document.createElement("button");
     bubble.className = "bubble";
-    bubble.innerHTML = ICON_SORT + '<span>' + esc(t("shortName")) + '</span>';
+    bubble.innerHTML = ICON_BRAND + '<span>' + esc(t("shortName")) + '</span>';
     bubble.setAttribute("aria-label", t("name"));
     bubble.style.display = "none";
     bubble.addEventListener("click", function () {
