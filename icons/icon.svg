@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img">
+  <title>Advanced Card Sort</title>
+  <g transform="translate(9.14285714285715 9.14285714285715) scale(6.85714285714286)">
+    <rect x="1" y="2" width="14" height="12" rx="2.1" fill="#344955"/>
+    <rect x="2" y="3" width="12" height="10" rx="1.1" fill="#FCF8EE"/>
+    <rect x="3.45" y="5.15" width="5.3" height="1.7" rx="0.85" fill="#416E83"/>
+    <rect x="4.7" y="9.15" width="3.55" height="1.7" rx="0.85" fill="#765989"/>
+    <path d="M11.25 5.75 V10.25 M10 9.05 L11.25 10.25 12.5 9.05" fill="none" stroke="#344955" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
