@@ -1,4 +1,5 @@
 {
   "extName": { "message": "多级排序 — 多属性网页卡片排序" },
+  "extDescription": { "message": "按多个属性对网页上的卡片进行综合排序。" },
   "actionTitle": { "message": "多级排序 — 多属性网页卡片排序" }
 }

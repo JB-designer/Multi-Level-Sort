@@ -1,4 +1,5 @@
 {
   "extName": { "message": "Advanced Card Sort" },
+  "extDescription": { "message": "Sort cards on websites by multiple criteria with custom priorities." },
   "actionTitle": { "message": "Advanced Card Sort" }
 }
