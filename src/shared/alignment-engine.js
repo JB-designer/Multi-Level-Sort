@@ -1,4 +1,4 @@
-// Advanced Card Sort · https://github.com/JB-designer/Sorter-plugin · MIT License
+// Multi-Level Sort · https://github.com/JB-designer/Multi-Level-Sort · MIT License
 /*
  * CardSorterEngine — 跨卡片结构对齐引擎 (wrapper induction)
  *

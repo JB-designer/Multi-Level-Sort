@@ -1,5 +1,5 @@
 {
-  "extName": { "message": "Advanced Card Sort" },
-  "extDescription": { "message": "Sort cards on websites by multiple criteria with custom priorities." },
-  "actionTitle": { "message": "Advanced Card Sort" }
+  "extName": { "message": "Multi-Level Sort" },
+  "extDescription": { "message": "Combined Ranking by Likes, Views & More, in Your Order. Sort cards on websites by multiple criteria." },
+  "actionTitle": { "message": "Multi-Level Sort" }
 }

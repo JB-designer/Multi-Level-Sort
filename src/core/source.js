@@ -1,4 +1,4 @@
-// Advanced Card Sort · https://github.com/JB-designer/Sorter-plugin · MIT License
+// Multi-Level Sort · https://github.com/JB-designer/Multi-Level-Sort · MIT License
 export function makeSourceKey(adapterId, url) {
   const parsed = new URL(url);
   parsed.hash = "";

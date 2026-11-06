@@ -1,4 +1,4 @@
-// Advanced Card Sort · https://github.com/JB-designer/Sorter-plugin · MIT License
+// Multi-Level Sort · https://github.com/JB-designer/Multi-Level-Sort · MIT License
 /*
  * 背景服务:
  * 1. 点击工具栏图标 → 向当前页注入悬浮面板并开关

@@ -1,4 +1,4 @@
-// Advanced Card Sort · https://github.com/JB-designer/Sorter-plugin · MIT License
+// Multi-Level Sort · https://github.com/JB-designer/Multi-Level-Sort · MIT License
 /*
  * 界面文案(英文 + 中文)。英文是默认;Chrome 设成中文的人看到中文。
  * 文案来自 copy deck v2 第 3 轮(english-copy/round3),两种语言各自按意思写,不是互译。
@@ -233,8 +233,8 @@ const ZH = {
 };
 
 const EN = {
-  name: "Advanced Card Sort",
-  shortName: "Advanced Card Sort",
+  name: "Multi-Level Sort",
+  shortName: "Multi-Level Sort",
   minimize: "Minimize",
   preparing: "Getting ready…",
   scanning: "Scanning for cards…",
@@ -380,7 +380,7 @@ const EN = {
   pickMissed: "Missed. Try again.",
 
   resultsTitle: "Sorted results",
-  resultsDocTitle: "Sorted results · Advanced Card Sort",
+  resultsDocTitle: "Sorted results · Multi-Level Sort",
   resultsHeading: ({ n, pages, whole }) => `${n} ${plural(n, "card", "cards")}${pages ? ` · ${pages}` : ""}${whole ? " (whole list)" : ""}`,
   resultsTabTitle: ({ n, source }) => `${n} ${plural(n, "card", "cards")} · ${source}`,
   from: "From ",
@@ -427,8 +427,8 @@ const EN = {
   stopWaiting: "Stop waiting & finish",
   waitTimeout: "Stopped waiting (no new cards in 2 min)",
   foldCards: (n) => `${n} ${plural(n, "card", "cards")}`,
-  credit: "Advanced Card Sort by James",
-  noResults: "No results yet. Go back to the page, open Advanced Card Sort, and click Sort."
+  credit: "Multi-Level Sort by James",
+  noResults: "No results yet. Go back to the page, open Multi-Level Sort, and click Sort."
 };
 
 export const STRINGS = { zh: ZH, en: EN };

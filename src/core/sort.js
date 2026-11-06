@@ -1,4 +1,4 @@
-// Advanced Card Sort · https://github.com/JB-designer/Sorter-plugin · MIT License
+// Multi-Level Sort · https://github.com/JB-designer/Multi-Level-Sort · MIT License
 import { normalizeText, parseDate, parseDuration, parseLocalDay, parseNumber } from "./parsers.js";
 import { CORE_FIELD_DEFINITIONS, getFieldType } from "./fields.js";
 import { getBucketRank } from "./buckets.js";

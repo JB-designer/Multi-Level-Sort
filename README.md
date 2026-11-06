@@ -1,8 +1,8 @@
-# Advanced Card Sort
+# Multi-Level Sort
 
-**Sort by multiple criteria with custom priorities.**
+**Combined Ranking by Likes, Views & More, in Your Order**
 
-Advanced Card Sort is a Chrome extension that uses multiple metrics—such as views, likes, and comments—**together** to sort webpage cards. You choose the metrics and their order of priority.
+Multi-Level Sort is a Chrome extension that uses multiple metrics—such as views, likes, and comments—**together** to sort webpage cards. You choose the metrics and their order of priority.
 
 **One metric doesn’t tell the whole story.** High view counts don’t necessarily mean people liked something, and lots of comments may reflect controversy rather than appreciation. Considering multiple metrics helps you find content that better matches your preferences.
 
@@ -24,7 +24,7 @@ The interface supports English and Chinese.
 
 ## Where it works
 
-Advanced Card Sort is designed for pages like those in the screenshots: each item appears in its own card, with numbers such as views, downloads, or likes. Examples include video galleries, mod catalogues, and downloadable asset libraries.
+Multi-Level Sort is designed for pages like those in the screenshots: each item appears in its own card, with numbers such as views, downloads, or likes. Examples include video galleries, mod catalogues, and downloadable asset libraries.
 
 Sites with numbered page links work best for reading across multiple pages. Support depends on how the website loads and displays its content:
 
@@ -53,7 +53,7 @@ After updating the source files, click **Reload** on the extension’s entry in 
 
 ## Permissions and local data
 
-Advanced Card Sort requests website access to read cards and the numbers displayed on them. It also uses browser permissions to open the panel, read additional pages, and display results.
+Multi-Level Sort requests website access to read cards and the numbers displayed on them. It also uses browser permissions to open the panel, read additional pages, and display results.
 
 Site settings and your last ten result sets are stored locally in your browser.
 
@@ -77,7 +77,7 @@ Data export is not currently supported.
 
 ## Report a problem
 
-Found a problem? Report it on [GitHub Issues](https://github.com/JB-designer/Sorter-plugin/issues).
+Found a problem? Report it on [GitHub Issues](https://github.com/JB-designer/Multi-Level-Sort/issues).
 
 ## License
 
@@ -164,7 +164,7 @@ Source code is licensed under MIT. See [`LICENSE`](LICENSE) for details.
 
 ## 反馈问题
 
-发现问题？欢迎通过 [GitHub Issues](https://github.com/JB-designer/Sorter-plugin/issues) 反馈。
+发现问题？欢迎通过 [GitHub Issues](https://github.com/JB-designer/Multi-Level-Sort/issues) 反馈。
 
 ## 许可证
 
