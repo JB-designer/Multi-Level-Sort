@@ -178,7 +178,7 @@
   }
 
   function detectTotalPages(page) {
-    var fromLinks = core.pageRange.detectTotalPages(numberedPageLinks(), location.href, page);
+    var fromLinks = core.pageRange.detectTotalPages(numberedPageLinks(), location.href, page, otherPagerLinks());
     // 分页条里最后一页常常不是链接("1 2 3 … 20" 里的 20 是灰字)→ 有分页链接时也看分页条里的纯数字
     var pagers = pagerElements();
     var pagerMax = null;
@@ -204,6 +204,30 @@
       if (host && host.contains(a)) return;
       var text = (a.textContent || "").trim();
       if (/^\d{1,5}$/.test(text)) anchors.push({ text: text, href: a.href });
+    });
+    return anchors;
+  }
+
+  // 分页条里文字不是数字的链接(「» Last」「末页」「Next」):网址里可能写着最后一页的页码
+  function otherPagerLinks() {
+    var anchors = [];
+    pagerElements().forEach(function (pager) {
+      pager.querySelectorAll("a[href]").forEach(function (a) {
+        if (!/^\d{1,5}$/.test((a.textContent || "").trim())) anchors.push({ text: (a.textContent || "").trim(), href: a.href });
+      });
+    });
+    // 没有 pagination 一类名字的分页条:看页码链接的父元素里其余的链接
+    var bars = [];
+    document.querySelectorAll("a[href]").forEach(function (a) {
+      if (host && host.contains(a)) return;
+      if (!/^\d{1,5}$/.test((a.textContent || "").trim())) return;
+      var bar = a.parentElement && (a.parentElement.tagName === "LI" ? a.parentElement.parentElement : a.parentElement);
+      if (!bar || bars.indexOf(bar) >= 0) return;
+      bars.push(bar);
+      bar.querySelectorAll("a[href]").forEach(function (other) {
+        var text = (other.textContent || "").trim();
+        if (!/^\d{1,5}$/.test(text)) anchors.push({ text: text, href: other.href });
+      });
     });
     return anchors;
   }

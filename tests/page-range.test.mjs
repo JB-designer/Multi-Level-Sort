@@ -157,3 +157,15 @@ test("total pages are read from page-number links only", () => {
   assert.equal(detectTotalPages([{ text: "2", href: "/tag/x/page/2/" }, { text: "9", href: "/tag/x/page/9/" }], "https://x.example/tag/x/", 1), 9);
   assert.equal(detectTotalPages([{ text: "Next", href: "/list?cursor=abc" }], base, 1), null);
 });
+
+test("a 'Last' link whose URL follows the page pattern sets the total", () => {
+  const base = "https://s.example/list?page=1";
+  const numbers = [1, 2, 3, 4].map((n) => ({ text: String(n), href: `/list?page=${n}` }));
+  assert.equal(detectTotalPages(numbers, base, 1), 4);
+  assert.equal(detectTotalPages(numbers, base, 1, [{ text: "» Last", href: "/list?page=50" }]), 50);
+  // 网址写法不同(别的列表)→ 不算
+  assert.equal(detectTotalPages(numbers, base, 1, [{ text: "Last", href: "/archive?page=50" }]), 4);
+  // 路径写法、任何语言的文字都一样
+  const paths = [1, 2, 3].map((n) => ({ text: String(n), href: `/tag/x/page/${n}/` }));
+  assert.equal(detectTotalPages(paths, "https://s.example/tag/x/", 1, [{ text: "末页", href: "/tag/x/page/88/" }]), 88);
+});

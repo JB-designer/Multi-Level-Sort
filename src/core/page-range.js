@@ -216,8 +216,50 @@ export function describeScope({ current, cardCount, total }) {
  * 只算"像页码"的链接 —— 链接文字是数字,且网址里的页码参数(page / p / paged)或某个路径段正好等于这个数字。
  * 读不出就返回 null(界面显示"网站没显示总页数",绝不猜)。
  */
-export function detectTotalPages(anchors = [], baseUrl = "", currentPage = 1) {
-  // 把每个数字链接的网址里"等于这个数字"的位置换成 {n},得到它的翻页模板;
+// 一个页码链接的网址里"等于这个数字"的位置换成 {n},得到它可能的翻页模板
+function pageTemplatesFor(url, text) {
+  const n = Number(text);
+  const templates = [];
+  for (const [key, value] of url.searchParams.entries()) {
+    if (value !== text) continue;
+    const copy = new URL(url.href);
+    copy.searchParams.set(key, "{n}");
+    // 其他参数里也带着同一个页码(如 ref=sr_pg_2)→ 一起换掉,不然每个页码链接各成一组
+    for (const [otherKey, otherValue] of url.searchParams.entries()) {
+      if (otherKey === key) continue;
+      const swapped = otherValue.replace(new RegExp(`(^|\\D)${text}(?!\\d)`, "g"), "$1{n}");
+      if (swapped !== otherValue) copy.searchParams.set(otherKey, swapped);
+    }
+    templates.push({ key: "q:" + copy.href, strong: /page|^p$|paged|^pg$/i.test(key) });
+  }
+  const segments = url.pathname.split("/");
+  segments.forEach((segment, index) => {
+    const embedded = new RegExp(`^((?:page|p)[-_]?)${n}(\\.[a-z0-9]{2,5})?$`, "i").exec(segment);
+    if (segment !== text && !embedded) return;
+    const parts = segments.slice();
+    parts[index] = embedded ? embedded[1] + "{n}" + (embedded[2] || "") : "{n}";
+    const strong = Boolean(embedded) || /^(?:page|p)$/i.test(segments[index - 1] || "");
+    templates.push({ key: "p:" + url.origin + parts.join("/") + url.search, strong });
+  });
+  return templates;
+}
+
+// 网址里出现的每个数字(参数值、路径段、page2 这类写法)
+function numbersInUrl(url) {
+  const found = new Set();
+  for (const value of url.searchParams.values()) if (/^\d{1,5}$/.test(value)) found.add(value);
+  for (const segment of url.pathname.split("/")) {
+    const m = /^(?:(?:page|p)[-_]?)?(\d{1,5})(?:\.[a-z0-9]{2,5})?$/i.exec(segment);
+    if (m) found.add(m[1]);
+  }
+  return [...found];
+}
+
+// anchors:文字是数字的页码链接;otherAnchors:分页条里文字不是数字的链接(如「» Last」「末页」「下一页」)。
+// 后者不看文字,只看网址:网址和页码链接是同一种写法时,读出网址里的页码(「Last」的网址写着最后一页)
+const MAX_DETECTED_TOTAL = 99999;
+
+export function detectTotalPages(anchors = [], baseUrl = "", currentPage = 1, otherAnchors = []) {
   // 同一个模板下有多个不同数字、并且包含当前页附近的页码,才算分页条
   const groups = new Map();
   for (const anchor of anchors) {
@@ -227,29 +269,7 @@ export function detectTotalPages(anchors = [], baseUrl = "", currentPage = 1) {
     if (n < 1) continue;
     let url;
     try { url = new URL(anchor.href, baseUrl); } catch { continue; }
-    const templates = [];
-    for (const [key, value] of url.searchParams.entries()) {
-      if (value !== text) continue;
-      const copy = new URL(url.href);
-      copy.searchParams.set(key, "{n}");
-      // 其他参数里也带着同一个页码(如 ref=sr_pg_2)→ 一起换掉,不然每个页码链接各成一组
-      for (const [otherKey, otherValue] of url.searchParams.entries()) {
-        if (otherKey === key) continue;
-        const swapped = otherValue.replace(new RegExp(`(^|\\D)${text}(?!\\d)`, "g"), "$1{n}");
-        if (swapped !== otherValue) copy.searchParams.set(otherKey, swapped);
-      }
-      templates.push({ key: "q:" + copy.href, strong: /page|^p$|paged|^pg$/i.test(key) });
-    }
-    const segments = url.pathname.split("/");
-    segments.forEach((segment, index) => {
-      const embedded = new RegExp(`^((?:page|p)[-_]?)${n}(\\.[a-z0-9]{2,5})?$`, "i").exec(segment);
-      if (segment !== text && !embedded) return;
-      const parts = segments.slice();
-      parts[index] = embedded ? embedded[1] + "{n}" + (embedded[2] || "") : "{n}";
-      const strong = Boolean(embedded) || /^(?:page|p)$/i.test(segments[index - 1] || "");
-      templates.push({ key: "p:" + url.origin + parts.join("/") + url.search, strong });
-    });
-    for (const t of templates) {
+    for (const t of pageTemplatesFor(url, text)) {
       if (!groups.has(t.key)) groups.set(t.key, { strong: false, pages: new Set() });
       const g = groups.get(t.key);
       g.strong = g.strong || t.strong;
@@ -257,15 +277,25 @@ export function detectTotalPages(anchors = [], baseUrl = "", currentPage = 1) {
     }
   }
   let best = null;
-  for (const g of groups.values()) {
+  for (const [key, g] of groups) {
     const pages = [...g.pages];
     const near = pages.some((p) => Math.abs(p - currentPage) <= 2);
     if (!near || (!g.strong && pages.length < 2)) continue;
     const score = (g.strong ? 1000 : 0) + pages.length;
-    if (!best || score > best.score) best = { score, max: Math.max(...pages) };
+    if (!best || score > best.score) best = { score, key, max: Math.max(...pages) };
   }
   if (!best) return null;
-  return Math.max(best.max, currentPage);
+  let max = best.max;
+  for (const anchor of otherAnchors) {
+    let url;
+    try { url = new URL(anchor.href, baseUrl); } catch { continue; }
+    for (const text of numbersInUrl(url)) {
+      const n = Number(text);
+      if (n <= max || n > MAX_DETECTED_TOTAL) continue;
+      if (pageTemplatesFor(url, text).some((t) => t.key === best.key)) max = n;
+    }
+  }
+  return Math.max(max, currentPage);
 }
 
 // 网站用文字写出总页数时读出来:"Page 1 of 50"、"共 50 页"、"第 2 頁，總計 105 頁"。
