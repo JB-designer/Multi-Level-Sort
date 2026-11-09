@@ -2,6 +2,7 @@
   <title>Multi-Level Sort</title>
 <rect x="9.5" y="11.05" width="109.0" height="105.9" rx="18.0" fill="#FFFFFF"/>
 <rect x="16" y="17.55" width="96" height="92.9" rx="11.5" fill="#000000"/>
+<path d="M18.7 81.44 H109.3 V98.95 A8.8 8.8 0 0 1 100.5 107.75 H27.5 A8.8 8.8 0 0 1 18.7 98.95 Z" fill="#2D424C"/>
 <path d="M18.7 81.44 V29.05 A8.8 8.8 0 0 1 27.5 20.25 H100.5 A8.8 8.8 0 0 1 109.3 29.05 V81.44 Z" fill="#FCFAF2"/>
 <rect x="22.51" y="30.67" width="56.21" height="14.08" rx="7.04" fill="#1C8BF8"/>
 <rect x="22.4" y="52.22" width="42.45" height="13.97" rx="6.99" fill="#0DB89E"/>
