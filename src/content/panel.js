@@ -20,6 +20,7 @@
   var ui = {};
 
   var state = {
+    theme: "auto",
     rule: null,
     ruleKey: "",
     dirty: false,
@@ -73,7 +74,10 @@
     state.ruleKey = core.rules.makeRuleKey(location.href);
     // 同一个网址(只是页码不同)记住拖到的位置;新页面从默认的右上角开始
     state.anchor = (await core.position.loadAnchor(state.ruleKey)) || core.position.defaultAnchor();
+    state.theme = await core.theme.load();
     buildPanel();
+    renderThemeButton();
+    watchTheme();
     state.rule = normalizeRule(await core.rules.getRuleForUrl(location.href));
     detectCurrentPage();
   }
@@ -92,7 +96,8 @@
       generic: await import(url("src/core/generic-adapter.js")),
       scrollReader: await import(url("src/core/scroll-reader.js")),
       i18n: await import(url("src/core/i18n.js")),
-      position: await import(url("src/core/panel-position.js"))
+      position: await import(url("src/core/panel-position.js")),
+      theme: await import(url("src/core/theme.js"))
     };
   }
 
@@ -1616,23 +1621,32 @@
 
   /* ================= UI(样稿 v7,配色 A「睡莲」) ================= */
 
+  // 配色 A「睡莲」。--edge = 面板外框(在同色系网页上也要看得清);胶囊在两种主题下都带一圈 2px 浅色外框(方案 C2)
+  var LIGHT_TOKENS = "--surface:#FAFAF7;--subtle:#F0F2EE;--border:#DCE0DA;--edge:#7F8E8B;--text:#1F2A2E;--text2:#485659;--text3:#5F6B6D;" +
+    "--accent:#3B6577;--accentSoft:#E6EEF0;--button:#3B6577;--buttonHover:#2C4F5E;--success:#3D6B4B;--successSoft:#EAF1EA;" +
+    "--warning:#875414;--warningSoft:#F7EFDF;--danger:#9E3A3A;--dangerSoft:#F7E9E7;--focus:#4A5BA6;--link:#3B5C8F;--field:#FFFFFF;--onAccent:#FFFFFF;" +
+    "--shadow:0 6px 24px rgba(31,42,46,.16);--shadowDrag:0 14px 40px rgba(31,42,46,.30);" +
+    "--pill:#FAFAF7;--pillHover:#E6EEF0;--pillText:#3B6577;--pillTextHover:#2C4F5E;--pillRing:0 0 0 2px #3B6577,0 0 0 4px #FAFAF7;color-scheme:light";
+  var DARK_TOKENS = "--surface:#1E2427;--subtle:#262E31;--border:#3A4448;--edge:#7A8F96;--text:#E6ECEE;--text2:#B4C0C3;--text3:#93A1A4;" +
+    "--accent:#8FBCCD;--accentSoft:#24363E;--button:#47788C;--buttonHover:#3E6A7C;--success:#8FC7A0;--successSoft:#1D2C22;" +
+    "--warning:#E3C07A;--warningSoft:#33291A;--danger:#E59A92;--dangerSoft:#3A2422;--focus:#9AA8E6;--link:#9DBBE6;--field:#262E31;--onAccent:#FFFFFF;" +
+    "--shadow:0 8px 28px rgba(0,0,0,.45);--shadowDrag:0 14px 40px rgba(0,0,0,.55);" +
+    "--pill:#47788C;--pillHover:#3E6A7C;--pillText:#FFFFFF;--pillTextHover:#FFFFFF;--pillRing:0 0 0 2px #FAFAF7;color-scheme:dark";
+
   var STYLE = [
     ":host{all:initial}",
-    ".panel,.bubble,.modal{--surface:#FAFAF7;--subtle:#F0F2EE;--border:#DCE0DA;--text:#1F2A2E;--text2:#485659;--text3:#5F6B6D;",
-    "--accent:#3B6577;--accentSoft:#E6EEF0;--button:#3B6577;--buttonHover:#2C4F5E;--success:#3D6B4B;--successSoft:#EAF1EA;",
-    "--warning:#875414;--warningSoft:#F7EFDF;--danger:#9E3A3A;--dangerSoft:#F7E9E7;--focus:#4A5BA6;--link:#3B5C8F;--field:#FFFFFF;--onAccent:#FFFFFF;color-scheme:light}",
-    // Dark palette: every colour comes from these tokens, so text and controls stay readable when the browser or a dark-mode extension darkens the page.
-    "@media (prefers-color-scheme:dark){.panel,.bubble,.modal{--surface:#1E2427;--subtle:#262E31;--border:#3A4448;--text:#E6ECEE;--text2:#B4C0C3;--text3:#93A1A4;",
-    "--accent:#8FBCCD;--accentSoft:#24363E;--button:#47788C;--buttonHover:#3E6A7C;--success:#8FC7A0;--successSoft:#1D2C22;",
-    "--warning:#E3C07A;--warningSoft:#33291A;--danger:#E59A92;--dangerSoft:#3A2422;--focus:#9AA8E6;--link:#9DBBE6;--field:#262E31;--onAccent:#FFFFFF;color-scheme:dark}}",
+    ".panel,.bubble,.modal{" + LIGHT_TOKENS + "}",
+    // 深色:跟随系统(没选过主题时),或用户在标题栏选了深色。所有颜色都来自这些变量。
+    "@media (prefers-color-scheme:dark){:host(:not([data-theme=light])) :is(.panel,.bubble,.modal){" + DARK_TOKENS + "}}",
+    ":host([data-theme=dark]) :is(.panel,.bubble,.modal){" + DARK_TOKENS + "}",
     "*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Noto Sans SC','Microsoft YaHei',sans-serif}",
     ".panel{position:fixed;top:16px;right:16px;width:360px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;z-index:2147483646;",
-    "background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 6px 24px rgba(31,42,46,.14);font-size:13px;line-height:1.45;text-align:left}",
-    ".bubble{position:fixed;top:16px;right:16px;z-index:2147483646;background:var(--button);color:var(--onAccent);border:none;border-radius:20px;padding:8px 16px;font-size:13px;cursor:grab;box-shadow:0 4px 14px rgba(31,42,46,.25);white-space:nowrap;display:flex;align-items:center;gap:6px;user-select:none;touch-action:none}",
-    ".bubble:hover{background:var(--buttonHover)}",
+    "background:var(--surface);color:var(--text);border:1px solid var(--edge);border-radius:12px;box-shadow:var(--shadow);font-size:13px;line-height:1.45;text-align:left}",
+    ".bubble{position:fixed;top:16px;right:16px;z-index:2147483646;background:var(--pill);color:var(--pillText);border:none;border-radius:20px;padding:8px 16px;font-size:13px;cursor:grab;box-shadow:var(--pillRing),0 4px 14px rgba(31,42,46,.25);white-space:nowrap;display:flex;align-items:center;gap:6px;user-select:none;touch-action:none}",
+    ".bubble:hover{background:var(--pillHover);color:var(--pillTextHover)}",
     // 拖动:按住胶囊或标题栏移动;拖动中加深阴影
-    ".bubble.dragging{cursor:grabbing;box-shadow:0 10px 28px rgba(31,42,46,.38)}",
-    ".panel.dragging{box-shadow:0 14px 40px rgba(31,42,46,.30)}",
+    ".bubble.dragging{cursor:grabbing;box-shadow:var(--pillRing),0 10px 28px rgba(31,42,46,.38)}",
+    ".panel.dragging{box-shadow:var(--shadowDrag)}",
     ".panel.dragging .ph{cursor:grabbing}",
     "button{font:inherit;color:inherit}",
     ":focus-visible{outline:2px solid var(--focus);outline-offset:1px}",
@@ -1776,12 +1790,63 @@
     '<path d="M12.5 3.2 V9.8 M10.6 7.9 L12.5 9.8 L14.4 7.9" fill="none" stroke="#2D424C" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>' +
     '<circle cx="4.5" cy="13.5" r="0.9" fill="#FCFAF2"/><circle cx="8" cy="13.5" r="1.05" fill="#FCFAF2"/><circle cx="11.5" cy="13.5" r="0.9" fill="#FCFAF2"/></svg>';
   var ICON_MINUS = SVG_OPEN + ' stroke-width="2"><path d="M5 12h14"/></svg>';
+  // 主题按钮显示"点了会切换到的"模式:浅色时显示月亮,深色时显示太阳(Lucide)
+  var ICON_MOON = SVG_OPEN + ' stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+  var ICON_SUN = SVG_OPEN + ' stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>';
+
+  /* ================= 浅色 / 深色 ================= */
+
+  function effectiveTheme() { return core.theme.resolve(state.theme, core.theme.prefersDark()); }
+
+  // 没选过(auto)时不加属性,完全跟随系统
+  function setHostTheme() {
+    if (!host) return;
+    if (state.theme === "light" || state.theme === "dark") host.setAttribute("data-theme", state.theme);
+    else host.removeAttribute("data-theme");
+  }
+
+  function renderThemeButton() {
+    var button = ui.themeButton;
+    if (!button) return;
+    var toDark = effectiveTheme() === "light";
+    var label = t(toDark ? "themeToDark" : "themeToLight");
+    button.innerHTML = toDark ? ICON_MOON : ICON_SUN;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  }
+
+  function applyTheme(value) {
+    state.theme = core.theme.normalize(value);
+    setHostTheme();
+    renderThemeButton();
+  }
+
+  function switchTheme() {
+    var next = core.theme.flip(state.theme, core.theme.prefersDark());
+    applyTheme(next);
+    core.theme.save(next).catch(function () { /* 存不下也照样切换,只是下次不记得 */ });
+  }
+
+  // 系统深浅色变化、或在别的标签页切换了主题,这里同步
+  function watchTheme() {
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      var onSystem = function () { if (state.theme === "auto") renderThemeButton(); };
+      if (mq.addEventListener) mq.addEventListener("change", onSystem); else if (mq.addListener) mq.addListener(onSystem);
+    } catch (error) { /* 没有 matchMedia 就不跟 */ }
+    try {
+      chrome.storage.onChanged.addListener(function (changes, area) {
+        if (area === "local" && changes[core.theme.STORAGE_KEY]) applyTheme(changes[core.theme.STORAGE_KEY].newValue);
+      });
+    } catch (error) { /* 扩展被重新加载后 chrome.storage 不可用,忽略 */ }
+  }
 
   function buildPanel() {
     host = document.createElement("div");
     host.id = "card-sorter-host";
     // closed:网页和深色插件改不到面板里的颜色
     shadow = host.attachShadow({ mode: "closed" });
+    setHostTheme();
     document.documentElement.appendChild(host);
 
     var style = document.createElement("style");
@@ -1794,6 +1859,7 @@
     panel.setAttribute("aria-label", t("name"));
     panel.innerHTML =
       '<div class="ph"><span class="logo">' + ICON_BRAND + '</span><span class="t">' + esc(t("name")) + '</span>' +
+      '  <button class="x" data-act="theme" data-el="themeButton"></button>' +
       '  <button class="x" data-act="minimize" title="' + esc(t("minimize")) + '" aria-label="' + esc(t("minimize")) + '">' + ICON_MINUS + '</button></div>' +
       '<div class="scope" data-el="scope">' + esc(t("preparing")) + '</div>' +
       '<div class="pb">' +
@@ -1962,7 +2028,8 @@
   }
 
   function handleAction(act, target) {
-    if (act === "minimize") { ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
+    if (act === "theme") switchTheme();
+    else if (act === "minimize") { ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
     else if (act === "redetect") { if (state.collecting) return; state.notes = []; detectCurrentPage(); }
     else if (act === "scrollStop") cancelCollect();
     else if (act === "stopWaiting") stopWaiting();

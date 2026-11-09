@@ -7,8 +7,9 @@
   --focus: #4A5BA6; --link: #3B5C8F; --page: #E9ECE8; --field: #FFFFFF;
   color-scheme: light;
 }
+/* 深色:跟随系统(没在面板里选过主题时),或在面板里选了深色 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --surface: #1E2427; --subtle: #262E31; --border: #3A4448;
     --text: #E6ECEE; --text2: #B4C0C3; --text3: #93A1A4;
     --accent: #8FBCCD; --accentSoft: #24363E;
@@ -16,6 +17,14 @@
     --focus: #9AA8E6; --link: #9DBBE6; --page: #15191B; --field: #262E31;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --surface: #1E2427; --subtle: #262E31; --border: #3A4448;
+  --text: #E6ECEE; --text2: #B4C0C3; --text3: #93A1A4;
+  --accent: #8FBCCD; --accentSoft: #24363E;
+  --success: #8FC7A0; --successSoft: #1D2C22; --warning: #E3C07A; --warningSoft: #33291A;
+  --focus: #9AA8E6; --link: #9DBBE6; --page: #15191B; --field: #262E31;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--page); color: var(--text);

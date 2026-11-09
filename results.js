@@ -9,6 +9,7 @@
  */
 import { buildResultView, describePageList, formatCardValue, fieldName, appendFieldLabel, appendSentence } from "./src/core/result-view.js";
 import { t, isZh } from "./src/core/i18n.js";
+import { STORAGE_KEY as THEME_KEY, normalize as normalizeTheme } from "./src/core/theme.js";
 
 // 静态文字(标题、空状态)跟随界面语言
 document.documentElement.lang = isZh ? "zh-CN" : "en";
@@ -34,6 +35,22 @@ const RESULT_KEY = (() => {
 })();
 
 initialize();
+initTheme();
+
+// 主题跟随面板里的选择;localStorage 留一份副本,让 theme-boot.js 下次打开时第一帧就是对的颜色
+function setTheme(value) {
+  const v = normalizeTheme(value);
+  if (v === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", v);
+  try { localStorage.setItem(THEME_KEY, v); } catch (error) { /* 存不下只影响首帧 */ }
+}
+
+async function initTheme() {
+  setTheme((await chrome.storage.local.get(THEME_KEY))[THEME_KEY]);
+  chrome.storage.local.onChanged.addListener((changes) => {
+    if (changes[THEME_KEY]) setTheme(changes[THEME_KEY].newValue);
+  });
+}
 
 async function initialize() {
   const stored = await chrome.storage.local.get(RESULT_KEY);
