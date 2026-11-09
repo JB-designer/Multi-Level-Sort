@@ -1768,12 +1768,13 @@
     ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}"
   ].join("\n");
 
-  // 图标:标题栏和收起胶囊用产品图标(与 icons/icon.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
+  // 图标:标题栏和收起胶囊用产品图标(与 icons/icon-16.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
   var SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
-  var ICON_BRAND = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="2" width="14" height="12" rx="2.1" fill="#344955"/>' +
-    '<rect x="2" y="3" width="12" height="10" rx="1.1" fill="#FCF8EE"/><rect x="3.45" y="5.15" width="5.3" height="1.7" rx="0.85" fill="#416E83"/>' +
-    '<rect x="4.7" y="9.15" width="3.55" height="1.7" rx="0.85" fill="#765989"/>' +
-    '<path d="M11.25 5.75 V10.25 M10 9.05 L11.25 10.25 12.5 9.05" fill="none" stroke="#344955" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_BRAND = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="0.5" width="16" height="15" rx="3" fill="#2D424C"/>' +
+    '<path d="M1 11.5 V3.5 A2 2 0 0 1 3 1.5 H13 A2 2 0 0 1 15 3.5 V11.5 Z" fill="#FCFAF2"/>' +
+    '<rect x="2.5" y="3" width="7.5" height="2.2" rx="1.1" fill="#1C8BF8"/><rect x="2.5" y="7" width="5" height="2.2" rx="1.1" fill="#0DB89E"/>' +
+    '<path d="M12.5 3.2 V9.8 M10.6 7.9 L12.5 9.8 L14.4 7.9" fill="none" stroke="#2D424C" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<circle cx="4.5" cy="13.5" r="0.9" fill="#FCFAF2"/><circle cx="8" cy="13.5" r="1.05" fill="#FCFAF2"/><circle cx="11.5" cy="13.5" r="0.9" fill="#FCFAF2"/></svg>';
   var ICON_MINUS = SVG_OPEN + ' stroke-width="2"><path d="M5 12h14"/></svg>';
 
   function buildPanel() {
