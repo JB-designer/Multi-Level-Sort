@@ -1768,7 +1768,7 @@
     ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}"
   ].join("\n");
 
-  // 图标:标题栏和收起胶囊用产品图标(与 icons/icon-16.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
+  // 图标:标题栏和收起胶囊用产品图标(与 icons/icon-panel.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
   var SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
   var ICON_BRAND = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="0.5" width="16" height="15" rx="3" fill="#2D424C"/>' +
     '<path d="M1 11.5 V3.5 A2 2 0 0 1 3 1.5 H13 A2 2 0 0 1 15 3.5 V11.5 Z" fill="#FCFAF2"/>' +
