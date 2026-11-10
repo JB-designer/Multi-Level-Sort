@@ -275,6 +275,9 @@
   }
 
   var ICON_HINTS = [
+    // 网站图标名里找到的原词:名字就用这个原词,不翻译(word)
+    { id: "views", re: /playdata/i, word: "playdata" },
+    { id: "danmaku", re: /danmu/i, word: "danmu" },
     // dislikes 必须在 likes 之前:"dislike.png" 也含 "like"
     { id: "dislikes", re: /thumbs?-down|dislike|downvote|点踩|點踩/i },
     { id: "views", re: /eye|view|visibility|watch|play-circle|播放|观看|觀看|浏览|瀏覽/i },
@@ -315,6 +318,7 @@
     var text = normalizeText(context).toLowerCase();
     if (!text) return null;
     var found = null;
+    var word = "";
     for (var i = 0; i < ICON_HINTS.length; i += 1) {
       if (!ICON_HINTS[i].re.test(text)) continue;
       if (ICON_HINTS[i].id === "dislikes" && found === null) {
@@ -323,13 +327,12 @@
         continue;
       }
       if (found && found !== ICON_HINTS[i].id && !sameMeaning(found, ICON_HINTS[i].id)) return null;
+      if (!found) word = ICON_HINTS[i].word || "";
       found = found || ICON_HINTS[i].id;
     }
     if (!found) return null;
-    for (var j = 0; j < CANONICAL_VOCAB.length; j += 1) {
-      if (CANONICAL_VOCAB[j].id === found) return CANONICAL_VOCAB[j];
-    }
-    return null;
+    var vocab = vocabById(found);
+    return vocab ? { vocab: vocab, word: word } : null;
   }
 
   /* ---------------------------------------------------------------- *
@@ -863,12 +866,16 @@
     }
     var view = element.ownerDocument && element.ownerDocument.defaultView;
     if (!view || !view.getComputedStyle) return null;
-    var before = view.getComputedStyle(element, "::before");
-    var content = before && before.content;
-    var match = /^["'](.{1,2})["']$/.exec(content || "");
-    if (!match) return null;
-    var font = String(before.fontFamily || "").replace(/[^\w\s,\-"']/g, "").slice(0, 120);
-    return { kind: "glyph", text: match[1], font: font };
+    // 字体图标的图案可能画在 ::before,也可能画在 ::after
+    var pseudos = ["::before", "::after"];
+    for (var p = 0; p < pseudos.length; p += 1) {
+      var style = view.getComputedStyle(element, pseudos[p]);
+      var match = /^["'](.{1,2})["']$/.exec((style && style.content) || "");
+      if (!match) continue;
+      var font = String(style.fontFamily || "").replace(/[^\w\s,\-"']/g, "").slice(0, 120);
+      return { kind: "glyph", text: match[1], font: font };
+    }
+    return null;
   }
 
   function svgMarkup(element, doc, depth) {
@@ -1748,15 +1755,16 @@
         var context = entries[e].occurrence.context;
         var haystack = pass === 0 ? context.attrHints : context.attrHintsNext;
         var hint = matchIconHint(haystack);
-        if (hint) hintCounts[hint.id] = (hintCounts[hint.id] || 0) + 1;
+        if (!hint) continue;
+        var hintKey = hint.vocab.id + "|" + hint.word;
+        if (!hintCounts[hintKey]) hintCounts[hintKey] = { hint: hint, n: 0 };
+        hintCounts[hintKey].n += 1;
       }
-      for (var hintId in hintCounts) {
-        if (hintCounts[hintId] / entries.length >= 0.6) {
-          for (var v = 0; v < CANONICAL_VOCAB.length; v += 1) {
-            if (CANONICAL_VOCAB[v].id === hintId) {
-              return finishLabel("", CANONICAL_VOCAB[v], "icon");
-            }
-          }
+      for (var hintKey2 in hintCounts) {
+        if (hintCounts[hintKey2].n / entries.length >= 0.6) {
+          var won = hintCounts[hintKey2].hint;
+          if (won.word) return { siteLabel: won.word, display: won.word, canonical: won.vocab, source: "icon" };
+          return finishLabel("", won.vocab, "icon");
         }
       }
     }
