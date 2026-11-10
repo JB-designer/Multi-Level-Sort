@@ -92,6 +92,7 @@
       fields: await import(url("src/core/fields.js")),
       pagination: await import(url("src/core/pagination.js")),
       pageRange: await import(url("src/core/page-range.js")),
+      pageLinks: await import(url("src/core/page-links.js")),
       resultView: await import(url("src/core/result-view.js")),
       generic: await import(url("src/core/generic-adapter.js")),
       scrollReader: await import(url("src/core/scroll-reader.js")),
@@ -125,10 +126,11 @@
   function detectCurrentPage() {
     var page = currentPageNumber();
     state.currentPage = page;
-    state.totalPages = detectTotalPages(page);
+    var links = pageLinks(page);
+    state.totalPages = detectTotalPages(page, links);
     // 页面上既没有页码链接、也没有"下一页"、也没写总页数(常见于一直往下滑的网站)→ 只能读当前页,
-    // 不再摆出读不到东西的翻页控件
-    state.noPaging = !state.totalPages && page === 1 && !numberedPageLinks().length && !nextPageLink();
+    // 不再摆出读不到东西的翻页控件。页码链接 = pageLinks():卡片里的数字、单独一个不像下一页的数字不算
+    state.noPaging = !state.totalPages && page === 1 && !links.length && !nextPageLink();
     state.pageRange = core.pageRange.createPageRange({ current: page, total: state.totalPages });
     stopScrollSession();
     state.readTab = state.noPaging ? "cards" : "pages";
@@ -182,8 +184,8 @@
     renderAll();
   }
 
-  function detectTotalPages(page) {
-    var fromLinks = core.pageRange.detectTotalPages(numberedPageLinks(), location.href, page, otherPagerLinks());
+  function detectTotalPages(page, links) {
+    var fromLinks = core.pageRange.detectTotalPages(links, location.href, page, otherPagerLinks(links));
     // 分页条里最后一页常常不是链接("1 2 3 … 20" 里的 20 是灰字)→ 有分页链接时也看分页条里的纯数字
     var pagers = pagerElements();
     var pagerMax = null;
@@ -200,33 +202,34 @@
     var texts = [document.title].concat(pagers.map(function (pager) { return (pager.textContent || "").slice(0, 300); }));
     var fromText = core.pageRange.totalFromText(texts);
     // 网址里看不出页码规律、要逐个点数字链接的网站:总页数 = 那排数字里最大的
-    var follow = fromLinks == null ? core.pagination.chooseFollowLinks(numberedPageLinks(), location.href, page) : null;
+    var follow = fromLinks == null ? core.pagination.chooseFollowLinks(links, location.href, page) : null;
     var best = Math.max(fromLinks || 0, pagerMax || 0, fromText || 0, follow ? follow.total : 0);
     return best ? Math.max(best, page) : null;
   }
 
-  // group = 链接所在的那一排(同一个父元素;链接包在 li 里时看 li 的父元素)
-  function numberedPageLinks(root) {
-    return pageLinksIn(root || document, root ? null : host);
+  // 这一页的页码链接(判断有没有分页、算总页数、学翻页网址都用这一份,见 src/core/page-links.js)
+  function pageLinks(page) {
+    return core.pageLinks.selectPageLinks(pageLinksIn(document, host, cardRootsOf(document)), location.href, page);
   }
 
-  function pageLinksIn(root, skip) {
-    var anchors = [];
-    var bars = [];
-    root.querySelectorAll("a[href]").forEach(function (a) {
-      if (skip && skip.contains(a)) return;
-      var text = (a.textContent || "").trim();
-      if (!/^\d{1,5}$/.test(text)) return;
-      var bar = a.parentElement && (a.parentElement.tagName === "LI" ? a.parentElement.parentElement : a.parentElement);
-      var group = bars.indexOf(bar);
-      if (group < 0) { bars.push(bar); group = bars.length - 1; }
-      anchors.push({ text: text, href: a.href, group: group });
-    });
-    return anchors;
+  // 找到的卡片;找不到(或出错)时为空,"卡片里的数字不算"这一条就不起作用,其余照旧
+  function cardRootsOf(doc) {
+    try {
+      var found = engine.findCards(doc);
+      return (found && found.roots) || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // 页面上所有文字是数字的链接(还没筛;字段见 src/core/page-links.js collectNumberLinks)
+  function pageLinksIn(root, skip, cardRoots) {
+    return core.pageLinks.collectNumberLinks(root, { skip: skip, cardRoots: cardRoots });
   }
 
   // 分页条里文字不是数字的链接(「» Last」「末页」「Next」):网址里可能写着最后一页的页码
-  function otherPagerLinks() {
+  // links = pageLinks() 的结果:只看真正页码链接所在那一排
+  function otherPagerLinks(links) {
     var anchors = [];
     pagerElements().forEach(function (pager) {
       pager.querySelectorAll("a[href]").forEach(function (a) {
@@ -235,10 +238,8 @@
     });
     // 没有 pagination 一类名字的分页条:看页码链接的父元素里其余的链接
     var bars = [];
-    document.querySelectorAll("a[href]").forEach(function (a) {
-      if (host && host.contains(a)) return;
-      if (!/^\d{1,5}$/.test((a.textContent || "").trim())) return;
-      var bar = a.parentElement && (a.parentElement.tagName === "LI" ? a.parentElement.parentElement : a.parentElement);
+    (links || []).forEach(function (link) {
+      var bar = link.bar;
       if (!bar || bars.indexOf(bar) >= 0) return;
       bars.push(bar);
       bar.querySelectorAll("a[href]").forEach(function (other) {
@@ -528,13 +529,15 @@
   /* ---------------- 翻页模板管理与"同一页"识别 ---------------- */
 
   function prepareTemplates() {
-    var anchors = numberedPageLinks();
+    var page = state.currentPage || currentPageNumber();
+    var links = pageLinks(page);
+    var anchors = links.slice();
     var next = nextPageLink();
-    if (next) anchors.push({ text: String((state.currentPage || currentPageNumber()) + 1), href: next });
+    if (next) anchors.push({ text: String(page + 1), href: next });
     state.pageTemplates = core.pagination.makePageUrlTemplates(anchors, location.href);
     state.templateIndex = 0;
     // 学不出网址写法(网址里只有编码)时:不自己拼网址,点写着下一个数字的链接
-    var follow = core.pagination.chooseFollowLinks(numberedPageLinks(), location.href, state.currentPage || currentPageNumber());
+    var follow = core.pagination.chooseFollowLinks(links, location.href, page);
     if (follow) state.pageTemplates = [core.pagination.makeFollowLinksTemplate(follow)];
   }
 
@@ -551,7 +554,7 @@
   // 读完一页后,把那一页分页条里的数字链接记下来,下一页的链接就从这里来
   function learnPageLinks(anchors, page) {
     var template = state.pageTemplates[state.templateIndex];
-    if (template && template.follow && anchors) template.learn(anchors, location.href, page);
+    if (template && template.follow && anchors) template.learn(core.pageLinks.selectPageLinks(anchors, location.href, page), location.href, page);
   }
 
   // 第 1 页的规范网址(用户可能正停在第 N 页,二分探测必须从第 1 页起算)
@@ -849,7 +852,7 @@
       var base = doc.createElement("base");
       base.href = url;
       doc.head.appendChild(base); // 让 a.href 按那一页的网址补全
-      return { items: result.items || [], cardCount: result.cardCount || 0, pageLinks: pageLinksIn(doc, null) };
+      return { items: result.items || [], cardCount: result.cardCount || 0, pageLinks: pageLinksIn(doc, null, cardRootsOf(doc)) };
     } catch (error) {
       return { error: String(error && error.message || error), items: [] };
     }

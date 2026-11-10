@@ -226,7 +226,11 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
         const [links] = await chrome.scripting.executeScript({
           target: { tabId: workerTab.id },
           func: () => {
+            // 与 src/core/page-links.js 的 collectNumberLinks 相同(这里不能 import):row = 跳过只包着这个链接的外壳后的那一排;inCard = 在卡片里
+            let cards = [];
+            try { cards = globalThis.CardSorterEngine?.findCards(document)?.roots || []; } catch { cards = []; }
             const bars = [];
+            const rows = [];
             const out = [];
             document.querySelectorAll("a[href]").forEach((a) => {
               const text = (a.textContent || "").trim();
@@ -234,7 +238,11 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
               const bar = a.parentElement && (a.parentElement.tagName === "LI" ? a.parentElement.parentElement : a.parentElement);
               let group = bars.indexOf(bar);
               if (group < 0) { bars.push(bar); group = bars.length - 1; }
-              out.push({ text, href: a.href, group });
+              let rowEl = a.parentElement;
+              while (rowEl && rowEl.parentElement && (rowEl.textContent || "").trim() === text) rowEl = rowEl.parentElement;
+              let row = rows.indexOf(rowEl);
+              if (row < 0) { rows.push(rowEl); row = rows.length - 1; }
+              out.push({ text, href: a.href, group, row, inCard: cards.some((card) => card.contains(a)) });
             });
             return out;
           }
