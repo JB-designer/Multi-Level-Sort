@@ -1,6 +1,6 @@
 # Multi-Level Sort
 
-**Combined Ranking by Likes, Views & More, in Your Order**
+**A quality-of-life extension that combines likes, views, and more to rank webpage cards, with each metric’s priority set by you.**
 
 Multi-Level Sort is a Chrome extension that uses multiple metrics—such as views, likes, and comments—**together** to sort webpage cards. You choose the metrics and their order of priority.
 
