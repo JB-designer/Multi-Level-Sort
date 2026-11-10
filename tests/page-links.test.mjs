@@ -176,3 +176,121 @@ test("still rejected: a count link to a post's stats page, any link inside a car
   assert.equal(addressCarriesNumber("https://shop.example/latest/20", "https://shop.example/", 2), false);
   assert.equal(addressCarriesNumber("https://shop.example/item?id=12", "https://shop.example/", 2), false);
 });
+
+test("on the last page of a 2-page list, a lone link to the previous page counts, and the total is the current page", () => {
+  for (const href of ["/list?page=1", "/list"]) {
+    const url = "https://shop.example/list?page=2";
+    const body = el("body", {}, [el("ul", { class: "nav" }, [el("li", {}, [el("span", {}, [el("a", { href }, ["1"])])]), el("li", { class: "on" }, [el("span", {}, ["2"])])])]);
+    const links = pageLinksOf(body, url, 2, { useCards: false });
+    assert.deepEqual(texts(links), ["1"], href);
+    if (href.includes("page=1")) assert.equal(detectTotalPages(links, url, 2), 2);
+  }
+  // 上一页的数字指向别的地址 → 不算;不相邻的单个数字也不算
+  const url = "https://shop.example/list?page=3";
+  const other = el("body", {}, [el("div", {}, [el("span", {}, ["Inbox"]), el("a", { href: "/inbox" }, ["2"])])]);
+  assert.deepEqual(pageLinksOf(other, url, 3, { useCards: false }), []);
+  const far = el("body", {}, [el("div", { class: "nav" }, [el("a", { href: "/list?page=1" }, ["1"])])]);
+  assert.deepEqual(pageLinksOf(far, url, 3, { useCards: false }), []);
+});
+
+test("a pager whose numbers are each wrapped with a separator (\"2 |\", \"[2]\", \"2,\") is still one row", () => {
+  const url = "https://forum.example/category/mods/";
+  const href = (n) => `/category/mods/page/${n}/`;
+  const nums = [2, 3, 4, 12];
+  const variants = {
+    bar: el("ul", { class: "nav" }, [el("li", {}, ["1 |"])].concat(nums.map((n) => el("li", {}, [el("a", { href: href(n) }, [String(n)]), " |"])))),
+    brackets: el("table", {}, [el("tr", {}, [el("td", {}, ["[1]"])].concat(nums.map((n) => el("td", {}, ["[", el("a", { href: href(n) }, [String(n)]), "]"]))))]),
+    commas: el("div", { class: "nav" }, [el("span", {}, ["1,"])].concat(nums.map((n) => el("span", {}, [el("a", { href: href(n) }, [String(n)]), ","]))))
+  };
+  for (const [name, pager] of Object.entries(variants)) {
+    const links = pageLinksOf(el("body", {}, [pager]), url, 1, { useCards: false });
+    assert.deepEqual(texts(links), ["2", "3", "4", "12"], name);
+    assert.equal(new Set(links.map((a) => a.row)).size, 1, name);
+    assert.equal(detectTotalPages(links, url, 1), 12, name);
+  }
+  // 外壳里有别的字时不往上合并:卡片里的 "(2 replies)" 这类仍是单独一个
+  const text = el("body", {}, [el("div", {}, [el("span", {}, [el("a", { href: "/thread/9" }, ["2"]), " replies"]), el("span", {}, [el("a", { href: "/thread/9/likes" }, ["5"]), " likes"])])]);
+  const raw = collectNumberLinks(makeDocument(text, url), { baseUrl: url });
+  assert.notEqual(raw[0].row, raw[1].row);
+});
+
+test("separator-wrapped mini pagers inside forum rows stay out; the list's own pager is kept", () => {
+  const url = "https://forum.example/board";
+  const mini = (i) => el("span", { class: "pages" }, [1, 2, 3, 12].map((k) => el("span", {}, ["[", el("a", { href: `/thread/${500 + i}?page=${k}` }, [String(k)]), "]"])));
+  const thread = (i) => el("div", { class: "thread" }, [
+    el("a", { href: `/thread/${500 + i}` }, [el("h3", {}, [`Thread title ${i}`])]),
+    el("span", { class: "replies" }, [`${20 + i * 3} replies`]),
+    mini(i)
+  ]);
+  const pager = el("div", { class: "nav" }, [2, 3, 30].map((n) => el("span", {}, [el("a", { href: `/board?page=${n}` }, [String(n)]), " |"])));
+  const links = pageLinksOf(el("body", {}, [el("section", { class: "threads" }, Array.from({ length: 8 }, (_, i) => thread(i))), pager]), url);
+  assert.deepEqual(texts(links), ["2", "3", "30"]);
+  assert.equal(detectTotalPages(links, url, 1), 30);
+});
+
+test("link following uses the same row: a separator-wrapped pager whose addresses show no pattern reads all its numbers", () => {
+  const url = "https://cms.example/list/list_12_1.html";
+  const pager = el("table", {}, [el("tr", {}, [el("td", {}, ["Pages:"]), el("td", {}, ["[1]"])].concat([2, 3, 4, 12].map((n) => el("td", {}, ["[", el("a", { href: `/list/list_12_${n}.html` }, [String(n)]), "]"]))))]);
+  const links = pageLinksOf(el("body", {}, [pager]), url, 1, { useCards: false });
+  assert.equal(new Set(links.map((a) => a.group)).size, 4, "each number has its own parent");
+  const choice = chooseFollowLinks(links, url, 1);
+  assert.ok(choice);
+  assert.equal(choice.total, 12);
+  assert.equal(choice.links.get(2), "https://cms.example/list/list_12_2.html");
+});
+
+test("lone numbers in a sidebar and a footer are not merged into one row with each other", () => {
+  const url = "https://shop.example/list/";
+  const grid = el("div", { class: "grid" }, Array.from({ length: 6 }, (_, i) => el("div", { class: "item" }, [el("a", { href: `/item/${i}` }, [`Book title number ${i} with a long name`])])));
+  const pager = el("div", { class: "pg" }, [el("span", {}, ["1"]), " ", el("a", { href: "/list/?page=2" }, ["2"]), " ", el("a", { href: "/list/?page=3" }, ["3"])]);
+  const body = el("body", {}, [el("aside", {}, [el("a", { href: "/cart" }, ["7"])]), grid, pager, el("footer", {}, [el("a", { href: "/help/faq" }, ["2"])])]);
+  const raw = collectNumberLinks(makeDocument(body, url), { baseUrl: url });
+  assert.notEqual(raw[0].row, raw[raw.length - 1].row, "sidebar 7 and footer 2 are separate rows");
+  const links = selectPageLinks(raw, url, 1);
+  assert.deepEqual(links.map((a) => a.href), ["https://shop.example/list/?page=2", "https://shop.example/list/?page=3"]);
+  assert.equal(chooseFollowLinks(links, url, 1), null, "the URL pattern is used, not the footer link");
+});
+
+test("a separator-wrapped pager that shares its list with one long info item is still one row", () => {
+  const url = "https://forum.example/category/mods/";
+  const href = (n) => `/category/mods/page/${n}/`;
+  const info = el("li", {}, ["Showing 1-6 of 72 mods in category Special Edition Graphics and Textures"]);
+  const pager = el("ul", { class: "nav" }, [info, el("li", {}, [el("em", {}, ["1"]), " |"])].concat([2, 3, 4, 5].map((n) => el("li", {}, [el("a", { href: href(n) }, [String(n)]), " |"])), [el("li", {}, ["…"]), el("li", {}, [el("a", { href: href(12) }, ["12"]), " |"]), el("li", {}, [el("a", { href: href(2) }, ["Next »"])])]));
+  const links = pageLinksOf(el("body", {}, [pager]), url, 1, { useCards: false });
+  assert.deepEqual(texts(links), ["2", "3", "4", "5", "12"]);
+  assert.equal(new Set(links.map((a) => a.row)).size, 1);
+  assert.equal(detectTotalPages(links, url, 1), 12);
+  // 中间隔着一块内容(长、并且有链接)时,两边分成两段
+  const block = el("li", {}, [el("a", { href: "/item/1" }, ["A long block of related content with its own link inside it"])]);
+  const split = el("ul", {}, [el("li", {}, [el("a", { href: href(2) }, ["2"]), " |"]), block, el("li", {}, [el("a", { href: "/elsewhere/9" }, ["9"]), " |"])]);
+  const raw = collectNumberLinks(makeDocument(el("body", {}, [split]), url), { baseUrl: url });
+  assert.notEqual(raw[0].row, raw[1].row);
+});
+
+test("a lone next-page link that is the current address plus the number (index2.html, list2) counts; other letters+2 addresses do not", () => {
+  assert.equal(addressCarriesNumber("https://cms.example/index2.html", "https://cms.example/index.html", 2), true);
+  assert.equal(addressCarriesNumber("https://cms.example/two/list2.html", "https://cms.example/two/list.html", 2), true);
+  assert.equal(addressCarriesNumber("https://cms.example/two/list2", "https://cms.example/two/list", 2), true);
+  assert.equal(addressCarriesNumber("https://cms.example/index12.html", "https://cms.example/index.html", 2), false);
+  assert.equal(addressCarriesNumber("https://cms.example/other/index2.html", "https://cms.example/index.html", 2), false);
+  // 没有分页的页面上:"Also in this series: 2" → /game/diablo2,"2 new replies" → /forum/h2
+  assert.equal(addressCarriesNumber("https://cms.example/game/diablo2", "https://cms.example/category/mods/", 2), false);
+  assert.equal(addressCarriesNumber("https://cms.example/forum/h2", "https://cms.example/category/mods/", 2), false);
+  assert.equal(addressCarriesNumber("https://cms.example/game/diablo2", "https://cms.example/game/diablo", 2), true, "only when it really is the current address + 2");
+  const url = "https://cms.example/category/mods/";
+  const body = el("body", {}, [el("aside", {}, [el("h4", {}, ["Series"]), el("p", {}, ["Also in this series: ", el("a", { href: "/game/diablo2" }, ["2"])])]), el("header", {}, [el("a", { href: "/forum/h2" }, ["2"]), " new replies"])]);
+  assert.deepEqual(pageLinksOf(body, url, 1, { useCards: false }), []);
+  assert.equal(addressCarriesNumber("https://social.example/u2/status/2119950518659535022/analytics", "https://social.example/home", 2), false);
+});
+
+test("a long text item inside the run of numbers does not split the row", () => {
+  const url = "https://forum.example/category/mods/";
+  const href = (n) => `/category/mods/page/${n}/`;
+  const li = (n) => el("li", {}, [el("a", { href: href(n) }, [String(n)]), " |"]);
+  const jump = el("li", {}, [el("span", { class: "jump" }, ["Page 1 of 12 - type a page number and press Enter to jump there"]), " |"]);
+  const pager = el("ul", { class: "nav" }, [el("li", {}, [el("em", {}, ["1"]), " |"]), li(2), li(3), li(4), li(5), jump, li(12)]);
+  const links = pageLinksOf(el("body", {}, [pager]), url, 1, { useCards: false });
+  assert.deepEqual(texts(links), ["2", "3", "4", "5", "12"]);
+  assert.equal(new Set(links.map((a) => a.row)).size, 1);
+  assert.equal(detectTotalPages(links, url, 1), 12);
+});

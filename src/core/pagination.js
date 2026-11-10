@@ -221,7 +221,7 @@ export function slowDownPlan({ status, retryAfter = null, delayMs = 400, attempt
 // 不再自己拼网址,直接点分页条里写着「下一个数字」的链接。只用一排紧挨着的数字链接,
 // 不碰「…」「›」「»」「末页」这类按钮;总页数 = 这排数字里最大的那个。
 // 任何一种学到的网址写法能还原这排链接时返回 null(照旧用网址写法,已经能翻页的网站不受影响)。
-// anchors: [{ text, href, group }],group = 链接所在的那排(同一个父元素)
+// anchors: [{ text, href, group, row? }],row/group = 链接所在的那排
 export function chooseFollowLinks(anchors, baseUrl, currentPage = 1) {
   const groups = new Map();
   for (const anchor of anchors || []) {
@@ -234,7 +234,7 @@ export function chooseFollowLinks(anchors, baseUrl, currentPage = 1) {
       continue;
     }
     if (!/^https?:/.test(href)) continue;
-    const key = anchor.group == null ? "all" : String(anchor.group);
+    const key = rowKeyOf(anchor);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push({ n, href, text: anchor.text });
   }
@@ -259,6 +259,12 @@ export function chooseFollowLinks(anchors, baseUrl, currentPage = 1) {
   const links = new Map();
   for (const link of best) if (!links.has(link.n)) links.set(link.n, link.href);
   return { links, total: Math.max(currentPage, ...links.keys()) };
+}
+
+// 一排 = anchor.row(跳过外壳和分隔符号后的那一排,见 page-links.js);没有时用旧的 group
+function rowKeyOf(anchor) {
+  if (anchor.row != null) return "r" + anchor.row;
+  return anchor.group == null ? "all" : "g" + anchor.group;
 }
 
 function sameUrl(a, b) {
@@ -308,7 +314,7 @@ function chooseFollowLinksLoose(anchors, baseUrl, page) {
     } catch {
       continue;
     }
-    const key = anchor.group == null ? "all" : String(anchor.group);
+    const key = rowKeyOf(anchor);
     if (!groups.has(key)) groups.set(key, new Map());
     groups.get(key).set(n, href);
   }

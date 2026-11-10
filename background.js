@@ -230,7 +230,8 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
             let cards = [];
             try { cards = globalThis.CardSorterEngine?.findCards(document)?.roots || []; } catch { cards = []; }
             const bars = [];
-            const rows = [];
+            const rowIds = new Map();
+            const alnum = (el) => String(el.textContent || "").replace(/[^\p{L}\p{N}]+/gu, "");
             const out = [];
             document.querySelectorAll("a[href]").forEach((a) => {
               const text = (a.textContent || "").trim();
@@ -239,9 +240,17 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
               let group = bars.indexOf(bar);
               if (group < 0) { bars.push(bar); group = bars.length - 1; }
               let rowEl = a.parentElement;
-              while (rowEl && rowEl.parentElement && (rowEl.textContent || "").trim() === text) rowEl = rowEl.parentElement;
-              let row = rows.indexOf(rowEl);
-              if (row < 0) { rows.push(rowEl); row = rows.length - 1; }
+              let wrapper = null;
+              while (rowEl && rowEl.parentElement && alnum(rowEl) === text) { wrapper = rowEl; rowEl = rowEl.parentElement; }
+              let run = null;
+              if (wrapper) {
+                const siblings = Array.from(rowEl.children);
+                run = siblings.indexOf(wrapper);
+                const breaks = (el) => alnum(el).length > 40 && (Boolean(el.querySelector("a[href]")) || el.querySelectorAll("*").length > 10);
+                while (run > 0 && !breaks(siblings[run - 1])) run -= 1;
+              }
+              if (!rowIds.has(rowEl)) rowIds.set(rowEl, rowIds.size);
+              const row = run == null ? rowIds.get(rowEl) : rowIds.get(rowEl) + ":" + run;
               out.push({ text, href: a.href, group, row, inCard: cards.some((card) => card.contains(a)) });
             });
             return out;

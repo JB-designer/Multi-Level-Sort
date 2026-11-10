@@ -7,7 +7,8 @@
  * 一个数字链接算页码链接,要同时满足:
  *   1. 不在卡片里(卡片里的数字是这张卡片的数据,如浏览数、回复数、帖子自己的小分页);
  *   2. 它所在的那一排有 ≥2 个不同的数字链接;
- *      或者它单独一个,数字 = 当前页 + 1,同一个网站,并且网址能证明它是下一页:
+ *      或者它单独一个,数字 = 当前页 + 1 或 当前页 − 1(最后一页上只剩"上一页"的数字),同一个网站,
+ *      并且网址能证明它是这个列表的一页:
  *        和当前页同一个地址(只有页码部分不同),或者这个数字作为单独一段写在网址最后一段路径
  *        或某个参数值里(/latest/2、index_2.html、list_12_2.html、?pg=2)。
  *
@@ -22,13 +23,14 @@ const NUMBER_TEXT = /^\d{1,5}$/;
 
 // 从页面(或读到的别的页)里收集所有文字是数字的链接,还没筛。
 // group = 链接所在的那一排(同一个父元素;链接包在 li 里时看 li 的父元素)—— 旧分组,下游照旧用
-// row   = 跳过只包着这个链接的外壳(span、li…)之后的那一排,用来数一排里有几个不同的数字
+// row   = 跳过只包着这个链接的外壳(span、li…;外壳里可以另有分隔符号,如 "2 |"、"[2]"、"2,")之后的那一排,
+//         用来数一排里有几个不同的数字
 // inCard = 在 cardRoots 的某张卡片里;bar = group 对应的元素
 // background.js 在后台标签页里有一份同样的收集代码(那里不能 import),改这里时一起改。
 export function collectNumberLinks(root, { skip = null, cardRoots = [], baseUrl = "" } = {}) {
   const anchors = [];
   const bars = [];
-  const rows = [];
+  const rowIds = new Map();
   root.querySelectorAll("a[href]").forEach((a) => {
     if (skip && skip.contains(a)) return;
     const text = (a.textContent || "").trim();
@@ -37,14 +39,51 @@ export function collectNumberLinks(root, { skip = null, cardRoots = [], baseUrl 
     const bar = parent && (parent.tagName === "LI" ? parent.parentElement : parent);
     let group = bars.indexOf(bar);
     if (group < 0) { bars.push(bar); group = bars.length - 1; }
-    let rowEl = parent;
-    while (rowEl && rowEl.parentElement && (rowEl.textContent || "").trim() === text) rowEl = rowEl.parentElement;
-    let row = rows.indexOf(rowEl);
-    if (row < 0) { rows.push(rowEl); row = rows.length - 1; }
+    const place = rowOf(parent, text);
+    if (!rowIds.has(place.element)) rowIds.set(place.element, rowIds.size);
+    const row = place.run == null ? rowIds.get(place.element) : rowIds.get(place.element) + ":" + place.run;
     const inCard = (cardRoots || []).some((card) => card === a || card.contains(a));
     anchors.push({ text, href: hrefOf(a, baseUrl), group, row, inCard, bar });
   });
   return anchors;
+}
+
+// 从链接的父元素往上跳过外壳(外壳里除了这个数字只有分隔符号)。
+// 没跳过外壳:这一排 = 父元素(和以前一样)。
+// 跳过了外壳:这一排 = 外壳所在的那一段"连续的短兄弟元素"(每个 ≤40 个字/数字,如 "2 |"、"…"、"Next »")。
+//   只有"一块内容"才把它们隔成不同的段:长(>40 个字/数字)并且里面有链接或很多元素(卡片列表、正文区)。
+//   只是一段长文字的兄弟("Showing 1-6 of 72 …"、"Page 1 of 12 - type a page number…")不隔开,
+//   所以页码条里夹着长说明也还是一排;侧栏的 "7" 和页脚的 "2" 中间隔着内容区,不会被并成一排。
+// 返回 { element, run }:run = 那一段第一个元素在父元素里的位置(没跳过外壳时为 null)
+const SHORT_CHILD_MAX = 40;
+function rowOf(parent, text) {
+  let rowEl = parent;
+  let wrapper = null;
+  while (rowEl && rowEl.parentElement && onlyHolds(rowEl, text)) {
+    wrapper = rowEl;
+    rowEl = rowEl.parentElement;
+  }
+  if (!wrapper) return { element: rowEl, run: null };
+  const siblings = Array.from(rowEl.children || []);
+  let start = siblings.indexOf(wrapper);
+  while (start > 0 && !breaksRow(siblings[start - 1])) start -= 1;
+  return { element: rowEl, run: start };
+}
+
+const BLOCK_MIN_ELEMENTS = 10;
+function breaksRow(element) {
+  if (alnum(element).length <= SHORT_CHILD_MAX) return false;
+  if (element.querySelector && element.querySelector("a[href]")) return true;
+  return (element.querySelectorAll ? element.querySelectorAll("*").length : 0) > BLOCK_MIN_ELEMENTS;
+}
+
+function alnum(element) {
+  return String(element.textContent || "").replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+// 外壳里除了这个数字只有空白和符号(| , [ ] · …),没有别的字或数字
+function onlyHolds(element, text) {
+  return alnum(element) === text;
 }
 
 function hrefOf(a, baseUrl) {
@@ -68,7 +107,8 @@ export function selectPageLinks(anchors, baseUrl, currentPage = 1) {
   return list.filter((a) => {
     if (rows.get(rowKey(a)).size >= 2) return true;
     const n = Number(String(a.text).trim());
-    return n === currentPage + 1 && (sameListAddress(a.href, baseUrl) || addressCarriesNumber(a.href, baseUrl, n));
+    const adjacent = n === currentPage + 1 || (n >= 1 && n === currentPage - 1);
+    return adjacent && (sameListAddress(a.href, baseUrl) || addressCarriesNumber(a.href, baseUrl, n));
   });
 }
 
@@ -93,8 +133,10 @@ export function sameListAddress(href, baseUrl) {
   return pathStem(a.pathname) === pathStem(b.pathname);
 }
 
-// 同一个网站,并且数字 n 作为单独一段出现在网址最后一段路径或某个参数值里
-// (按非字母数字切开:index_2.html → index / 2 / html;page2、p2 也算)。
+// 同一个网站,并且网址写着数字 n:
+//   - n 作为单独一段出现在最后一段路径或某个参数值里(按非字母数字切开:index_2.html → index / 2 / html;page2、p2 也算);
+//   - 或者就是当前页的网址加上 n:同一个目录,最后一段 = 当前最后一段(去掉扩展名)+ n
+//     (index.html → index2.html、list → list2)。任意以"字母+2"结尾的网址(diablo2、h2)不算。
 export function addressCarriesNumber(href, baseUrl, n) {
   let a;
   let b;
@@ -117,7 +159,20 @@ export function addressCarriesNumber(href, baseUrl, n) {
   const segments = a.pathname.split("/").filter(Boolean);
   if (segments.length && hasToken(segments[segments.length - 1])) return true;
   for (const value of a.searchParams.values()) if (hasToken(value)) return true;
-  return false;
+  return currentAddressPlusNumber(a.pathname, b.pathname, wanted);
+}
+
+function currentAddressPlusNumber(linkPath, currentPath, wanted) {
+  const split = (path) => {
+    const i = path.lastIndexOf("/");
+    const last = path.slice(i + 1);
+    const ext = /\.[a-z0-9]{2,5}$/i.exec(last);
+    return { dir: path.slice(0, i + 1), stem: ext ? last.slice(0, -ext[0].length) : last, ext: ext ? ext[0].toLowerCase() : "" };
+  };
+  const link = split(linkPath);
+  const current = split(currentPath);
+  if (!current.stem || link.dir !== current.dir || link.ext !== current.ext) return false;
+  return link.stem === current.stem + wanted;
 }
 
 // 路径去掉页码部分:/list/2 、/list/page/2/ 、/list/p-2 、/list_2.html → /list 、/list.html
