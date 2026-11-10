@@ -172,10 +172,12 @@ export const MAX_CONSECUTIVE_FAILED_PAGES = 2;
 
 // 收集结束后的一句话说明。endedAfter = 列表最后一页的页码(没到头为 null);
 // skipped = 打开出错被跳过的页码。
-export function describeCollectOutcome({ requested = [], stored = [], endedAfter = null, skipped = [], duplicateOf = null, gaveUpAt = null } = {}) {
+export function describeCollectOutcome({ requested = [], stored = [], endedAfter = null, skipped = [], duplicateOf = null, gaveUpAt = null, noLinkAfter = null } = {}) {
   const parts = [];
   const storedCount = stored.length;
-  if (gaveUpAt != null) {
+  if (noLinkAfter != null) {
+    parts.push(`第 ${noLinkAfter} 页上没有第 ${noLinkAfter + 1} 页的链接,读到这里为止,已排序读到的 ${storedCount} 页。`);
+  } else if (gaveUpAt != null) {
     parts.push(`从第 ${gaveUpAt} 页起连续打不开,后面的页没有再读(可能列表在第 ${gaveUpAt - 1} 页就结束了),已排序读到的 ${storedCount} 页。`);
   } else if (endedAfter != null) {
     const reason = duplicateOf != null
@@ -213,4 +215,107 @@ export function slowDownPlan({ status, retryAfter = null, delayMs = 400, attempt
     waitMs: Math.min(60000, Math.max(1000, waitMs)),
     nextDelayMs: Math.min(10000, Math.max(1500, delayMs * 2))
   };
+}
+
+// 网址里看不出页码规律的网站(翻页网址里只有一串编码,没有页码):
+// 不再自己拼网址,直接点分页条里写着「下一个数字」的链接。只用一排紧挨着的数字链接,
+// 不碰「…」「›」「»」「末页」这类按钮;总页数 = 这排数字里最大的那个。
+// 任何一种学到的网址写法能还原这排链接时返回 null(照旧用网址写法,已经能翻页的网站不受影响)。
+// anchors: [{ text, href, group }],group = 链接所在的那排(同一个父元素)
+export function chooseFollowLinks(anchors, baseUrl, currentPage = 1) {
+  const groups = new Map();
+  for (const anchor of anchors || []) {
+    const n = Number(anchor.text);
+    if (!Number.isInteger(n) || n < 1) continue;
+    let href;
+    try {
+      href = new URL(anchor.href, baseUrl).href;
+    } catch {
+      continue;
+    }
+    if (!/^https?:/.test(href)) continue;
+    const key = anchor.group == null ? "all" : String(anchor.group);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ n, href, text: anchor.text });
+  }
+  let best = null;
+  for (const list of groups.values()) {
+    if (!list.some((link) => link.n === currentPage + 1)) continue;
+    if (!best || list.length > best.length) best = list;
+  }
+  if (!best) return null;
+
+  const others = best.filter((link) => link.n >= 2 && link.n !== currentPage);
+  const learned = makePageUrlTemplates(best, baseUrl).filter((t) => !/^fallback:/.test(t.name));
+  const fits = learned.some((t) => others.every((link) => {
+    try {
+      return sameUrl(t.make(link.n), link.href);
+    } catch {
+      return false;
+    }
+  }));
+  if (fits) return null;
+
+  const links = new Map();
+  for (const link of best) if (!links.has(link.n)) links.set(link.n, link.href);
+  return { links, total: Math.max(currentPage, ...links.keys()) };
+}
+
+function sameUrl(a, b) {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    left.hash = "";
+    right.hash = "";
+    left.searchParams.sort();
+    right.searchParams.sort();
+    return left.href.replace(/\/$/, "") === right.href.replace(/\/$/, "");
+  } catch {
+    return false;
+  }
+}
+
+// 翻页"写法":第 n 页的网址就是读到的页面上写着 n 的那个链接。
+// 每读完一页,把那页分页条里的数字链接记下来(learn),这样能一页一页往后走;
+// 还没见过 n 的链接时 has(n) 为 false,调用方停下并如实说明读到第几页。
+export function makeFollowLinksTemplate(choice) {
+  const known = new Map(choice ? choice.links : []);
+  return {
+    name: "follow-links",
+    follow: true,
+    known,
+    has: (n) => known.has(n),
+    make: (n) => {
+      if (!known.has(n)) throw new Error("no link to page " + n);
+      return known.get(n);
+    },
+    learn(anchors, baseUrl, page) {
+      const next = chooseFollowLinksLoose(anchors, baseUrl, page);
+      if (next) for (const [n, href] of next) if (!known.has(n)) known.set(n, href);
+    }
+  };
+}
+
+// learn 用:只要那排数字里有 page+1 就收下(不再检查网址写法,已经确定这个网站要点链接)
+function chooseFollowLinksLoose(anchors, baseUrl, page) {
+  const groups = new Map();
+  for (const anchor of anchors || []) {
+    const n = Number(anchor.text);
+    if (!Number.isInteger(n) || n < 1) continue;
+    let href;
+    try {
+      href = new URL(anchor.href, baseUrl).href;
+    } catch {
+      continue;
+    }
+    const key = anchor.group == null ? "all" : String(anchor.group);
+    if (!groups.has(key)) groups.set(key, new Map());
+    groups.get(key).set(n, href);
+  }
+  let best = null;
+  for (const map of groups.values()) {
+    if (!map.has(page + 1)) continue;
+    if (!best || map.size > best.size) best = map;
+  }
+  return best;
 }

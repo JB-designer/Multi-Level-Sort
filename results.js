@@ -102,6 +102,7 @@ function render() {
   const notes = [];
   if (stats.listEndedAfter != null) notes.push(["info", t("noteListEnds", stats.listEndedAfter)]);
   if (stats.stoppedAtPage != null) notes.push(["warn", t("noteStoppedAt", stats.stoppedAtPage)]);
+  if (stats.noLinkAfter != null) notes.push(["info", t("noteNoLink", stats.noLinkAfter)]);
   if (stats.skippedPages?.length) notes.push(["warn", t("noteSkipped", stats.skippedPages)]);
   if (stats.slowedDown) notes.push(["warn", t("noteSlow")]);
   if (stats.merged) notes.push(["info", t("noteMerged", stats.merged)]);

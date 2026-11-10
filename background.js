@@ -207,6 +207,7 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
       let items = [];
       let error = "";
       let noCards = false; // 页面正常打开,但一直没有出现卡片(多半是列表到头了)
+      let pageLinks = null; // 这一页上文字是数字的链接(逐个点链接翻页的网站靠它找下一页)
       try {
         await navigateAndWait(workerTab.id, entry.url, 25000);
         await chrome.scripting.executeScript({
@@ -222,6 +223,23 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
           args: [rule, entry.page]
         });
         items = result?.result?.items || [];
+        const [links] = await chrome.scripting.executeScript({
+          target: { tabId: workerTab.id },
+          func: () => {
+            const bars = [];
+            const out = [];
+            document.querySelectorAll("a[href]").forEach((a) => {
+              const text = (a.textContent || "").trim();
+              if (!/^\d{1,5}$/.test(text)) return;
+              const bar = a.parentElement && (a.parentElement.tagName === "LI" ? a.parentElement.parentElement : a.parentElement);
+              let group = bars.indexOf(bar);
+              if (group < 0) { bars.push(bar); group = bars.length - 1; }
+              out.push({ text, href: a.href, group });
+            });
+            return out;
+          }
+        }).catch(() => [null]);
+        pageLinks = links?.result || null;
         if (!items.length && !rendered) {
           noCards = true;
           error = "等了 20 秒页面上也没出现卡片(可能这一页不存在,或网站加载太慢)";
@@ -235,7 +253,8 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
         page: entry.page,
         items,
         error,
-        noCards
+        noCards,
+        pageLinks
       });
       await delay(500);
     }

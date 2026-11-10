@@ -47,7 +47,9 @@
   //   "1,2K" / "2,5" = 小数逗号;"1.234.567,89" / "1,234,567.89" = 最后一个符号是小数点。
   //   "1.234K" 这类带单位的点号仍按小数读;"0.123" 永远是小数。
   var NUM_TOKEN_SRC = "(?:\\d{1,3}(?:[ '’]\\d{3})+(?!\\d)(?:[.,]\\d+)?|\\d+(?:[.,]\\d+)*)";
-  var NUMBER_RE = new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*(?:万|萬|亿|億|k|m|b|thousand|million|billion)?\\b", "i");
+  // 单位字母(k/m/b…)后面紧跟着别的字母时不算单位:"3 bedrooms" 的 b 是单词的一部分,"3m"、"1.2k" 才是单位
+  var UNIT_SRC = "(?:万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
+  var NUMBER_RE = new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*" + UNIT_SRC + "?\\b", "i");
   var BYTE_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*(bytes?|kb|mb|gb|tb)\\b", "i");
   var PERCENT_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*%");
   var LEGACY_NUM_RE = /^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/;
@@ -229,7 +231,7 @@
     { id: "dislikes", zh: "点踩数", en: "Dislikes", re: /^(?:dislikes?|downvotes?|thumbs?\s*down|点踩|點踩|倒赞|倒讚|差评|差評)$/i },
     { id: "favorites", zh: "收藏数", en: "Favorites", re: /^(?:favou?rites?|favs?|bookmarks?|collects?|stars?|收藏|喜欢|喜歡)$/i },
     { id: "comments", zh: "评论数", en: "Comments", re: /^(?:comments?|replies|reply|讨论|討論|留言|评论|評論|回复|回覆)$|[则則条條]留言|[则則条條]评论/i },
-    { id: "score", zh: "评分", en: "Rating", re: /^(?:score|rating|rate|points?|积分|積分|评分|評分|分)$|^out of\b.*\b(?:stars?|rating)\b/i },
+    { id: "score", zh: "评分", en: "Rating", re: /^(?:score|rating|rate|points?|积分|積分|评分|評分|分)$|^out of\b.*\b(?:stars?|rating)\b|^(?:average|avg\.?)\s+(?:rating|score)$/i },
     { id: "heat", zh: "热度", en: "Popularity", re: /^(?:heat|hot|popularity|trending|热度|熱度|热门|熱門)$/i },
     { id: "downloads", zh: "下载量", en: "Downloads", re: /^(?:downloads?|dls?|下载|下載|下载量|下載量)$/i },
     { id: "endorsements", zh: "认可", en: "Endorsements", re: /^(?:endorsements?)$/i },
@@ -541,7 +543,7 @@
 
   function countNumberish(text) {
     var stripped = stripDateAndDuration(text);
-    var matches = stripped.match(new RegExp(NUM_TOKEN_SRC + "\\s*(?:万|萬|亿|億|k|m|b|kb|mb|gb)?", "gi"));
+    var matches = stripped.match(new RegExp(NUM_TOKEN_SRC + "\\s*(?:万|萬|亿|億|(?:kb|mb|gb|k|m|b)(?![a-z]))?", "gi"));
     return matches ? Math.min(matches.length, 8) : 0;
   }
 
@@ -1164,7 +1166,10 @@
       if (!twin) { kept.push(candidate); continue; }
       var winner = mergeRank(candidate) > mergeRank(twin) ? candidate : twin;
       var loser = winner === candidate ? twin : candidate;
-      if ((!winner.canonicalId && loser.canonicalId) || (!winner.label && loser.label)) {
+      // 用词写出来的名字比按图标猜的名字可靠:"5.0 (3)" 旁边的星星图标猜成"收藏",
+      // 同一个数在 "5.0 out of 5 average rating" 里写明了是评分 → 用写明的名字
+      var wordsBeatIcon = winner.source === "icon" && loser.canonicalId && loser.source === "text-pair";
+      if ((!winner.canonicalId && loser.canonicalId) || (!winner.label && loser.label) || wordsBeatIcon) {
         winner.label = loser.label;
         winner.siteLabel = loser.siteLabel;
         winner.canonicalId = loser.canonicalId;
@@ -1386,7 +1391,46 @@
     while ((match = PAIR_RE.exec(normalized))) {
       pairs.push({ label: normalizeText(match[1]), value: normalizeText(match[2]) });
     }
+    if (!pairs.length) pairs = separatedPieces(normalized);
     return pairs;
+  }
+
+  // "4.97 out of 5 average rating, 67 reviews" / "评分 4.9 · 评价 120" 这类没有冒号的多指标文字:
+  // 按分隔符切成几段,每段正好一个数字 + 自己的词,就各成一个字段(用这段的词命名)。
+  // 分隔符:逗号(两边都是数字的千分位逗号除外)、分号、顿号、中间点、竖线;
+  // 斜杠只在前面是词时才算分隔("200 likes / 30 comments"),"4.5/5"、"11/10"、"1/2" 不拆。
+  // "满分几"("out of 5"、"/5"、"满分5")不算一个数字。至少两段都合格才拆,只有一段的文字照旧。
+  var PIECE_SPLIT_RE = /(?<!\d),|,(?!\d)|[;，；、·•|]|(?<=[A-Za-z\u4e00-\u9fa5]\s*)\/(?=\s*[A-Za-z\u4e00-\u9fa5\d])/;
+  var OUT_OF_RE = new RegExp("(?:\\bout\\s+of\\s+|满分\\s*|滿分\\s*|\\/\\s*)" + NUM_TOKEN_SRC, "gi");
+
+  function separatedPieces(normalized) {
+    if (!PIECE_SPLIT_RE.test(normalized)) return [];
+    var parts = normalized.split(new RegExp(PIECE_SPLIT_RE.source, "g"));
+    var pieces = [];
+    var tokenRe = new RegExp(NUM_TOKEN_SRC, "g");
+    for (var i = 0; i < parts.length; i += 1) {
+      var value = normalizeText(parts[i]);
+      if (!value) continue;
+      var bare = value.replace(OUT_OF_RE, " ");
+      var numbers = stripDateAndDuration(bare).match(tokenRe);
+      if (!numbers || numbers.length !== 1) continue;
+      var label = extractLabelPart(bare, "number").replace(/[^A-Za-z\u4e00-\u9fa5 ]+/g, " ");
+      label = normalizeText(label);
+      if (label.replace(/\s+/g, "").length < 2) continue;
+      pieces.push({ label: pieceLabelKey(label), value: value });
+    }
+    if (pieces.length < 2) return [];
+    var seen = {};
+    for (var p = 0; p < pieces.length; p += 1) {
+      if (seen[pieces[p].label]) return []; // 两段同名 → 分不清谁是谁,不拆
+      seen[pieces[p].label] = true;
+    }
+    return pieces;
+  }
+
+  // 单复数算同一个名字:"1 review" 和 "67 reviews" 是同一个字段
+  function pieceLabelKey(label) {
+    return label.toLowerCase().replace(/([a-z]{3,})s\b/g, "$1");
   }
 
   function findPairValue(text, label) {
@@ -1657,7 +1701,7 @@
     } else {
       remainder = stripDateAndDuration(remainder)
         .replace(new RegExp(BYTE_RE.source, "gi"), " ")
-        .replace(new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*(?:万|萬|亿|億|k|m|b|thousand|million|billion|%)?", "gi"), " ");
+        .replace(new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*(?:%|" + UNIT_SRC + ")?", "gi"), " ");
     }
     return normalizeText(remainder.replace(/[|·•,;，；()（）\[\]]+/g, " ").replace(/[:：]+/g, " "))
       .slice(0, 40);
@@ -1931,7 +1975,7 @@
   /* ---- 卡片身份:链接 / 预览图 / 预览文字 ---- */
   // 真标题:标题标签、itemprop 标题、class 含 title。class 含 name 不算(常是作者名)
   var STRONG_TITLE_SELECTOR = "h1,h2,h3,h4,[itemprop='headline' i],[itemprop='name' i],[class*='title' i]";
-  var WEAK_TITLE_SELECTOR = "h5,[class*='name' i]";
+  var WEAK_TITLE_SELECTOR = "h5,[class*='name' i],[data-testid*='name' i]";
   var OWNER_PROP_RE = /author|creator|publisher|brand|seller|contributor|provider/i;
   var NUMERIC_TEXT_RE = /^[\d\s.,:%+\-·•|/()万千亿萬億kKmMbBwW$€£¥₩₹]*$/;
 
@@ -1959,7 +2003,8 @@
   }
 
   // 顺序:h1-h4 → itemprop → class 含 title;有布局时跳过没显示出来的(0 尺寸,如隐藏的弹层文字)
-  var TITLE_TIERS = ["h1,h2,h3,h4", "[itemprop='headline' i],[itemprop='name' i]", "[class*='title' i]"];
+  // 最后一档:网站用 data-testid 标出的标题(class 名被压缩成乱码的网站常这样写);前面几档有结果时用不到它
+  var TITLE_TIERS = ["h1,h2,h3,h4", "[itemprop='headline' i],[itemprop='name' i]", "[class*='title' i]", "[data-testid*='title' i]"];
   function strongTitles(card) {
     var layout = !!renderedBox(card);
     var out = [];

@@ -199,16 +199,28 @@
     // 没有数字链接、只写着 "Page 1 of 50" / "共 50 页" 的网站
     var texts = [document.title].concat(pagers.map(function (pager) { return (pager.textContent || "").slice(0, 300); }));
     var fromText = core.pageRange.totalFromText(texts);
-    var best = Math.max(fromLinks || 0, pagerMax || 0, fromText || 0);
+    // 网址里看不出页码规律、要逐个点数字链接的网站:总页数 = 那排数字里最大的
+    var follow = fromLinks == null ? core.pagination.chooseFollowLinks(numberedPageLinks(), location.href, page) : null;
+    var best = Math.max(fromLinks || 0, pagerMax || 0, fromText || 0, follow ? follow.total : 0);
     return best ? Math.max(best, page) : null;
   }
 
-  function numberedPageLinks() {
+  // group = 链接所在的那一排(同一个父元素;链接包在 li 里时看 li 的父元素)
+  function numberedPageLinks(root) {
+    return pageLinksIn(root || document, root ? null : host);
+  }
+
+  function pageLinksIn(root, skip) {
     var anchors = [];
-    document.querySelectorAll("a[href]").forEach(function (a) {
-      if (host && host.contains(a)) return;
+    var bars = [];
+    root.querySelectorAll("a[href]").forEach(function (a) {
+      if (skip && skip.contains(a)) return;
       var text = (a.textContent || "").trim();
-      if (/^\d{1,5}$/.test(text)) anchors.push({ text: text, href: a.href });
+      if (!/^\d{1,5}$/.test(text)) return;
+      var bar = a.parentElement && (a.parentElement.tagName === "LI" ? a.parentElement.parentElement : a.parentElement);
+      var group = bars.indexOf(bar);
+      if (group < 0) { bars.push(bar); group = bars.length - 1; }
+      anchors.push({ text: text, href: a.href, group: group });
     });
     return anchors;
   }
@@ -521,10 +533,25 @@
     if (next) anchors.push({ text: String((state.currentPage || currentPageNumber()) + 1), href: next });
     state.pageTemplates = core.pagination.makePageUrlTemplates(anchors, location.href);
     state.templateIndex = 0;
+    // 学不出网址写法(网址里只有编码)时:不自己拼网址,点写着下一个数字的链接
+    var follow = core.pagination.chooseFollowLinks(numberedPageLinks(), location.href, state.currentPage || currentPageNumber());
+    if (follow) state.pageTemplates = [core.pagination.makeFollowLinksTemplate(follow)];
   }
 
   function urlFor(page) {
     return state.pageTemplates[state.templateIndex].make(page);
+  }
+
+  // 逐个点链接翻页时,还没见过这一页的链接 → 不能读(调用方停下并写明)
+  function hasUrlFor(page) {
+    var template = state.pageTemplates[state.templateIndex];
+    return !(template && template.follow) || template.has(page);
+  }
+
+  // 读完一页后,把那一页分页条里的数字链接记下来,下一页的链接就从这里来
+  function learnPageLinks(anchors, page) {
+    var template = state.pageTemplates[state.templateIndex];
+    if (template && template.follow && anchors) template.learn(anchors, location.href, page);
   }
 
   // 第 1 页的规范网址(用户可能正停在第 N 页,二分探测必须从第 1 页起算)
@@ -590,7 +617,7 @@
     var range = (opts && opts.range) || null;
     var remaining = pageNumbers.slice();
     var suspicious = false;
-    var note = { endedAfter: null, duplicateOf: null, skipped: [], gaveUpAt: null };
+    var note = { endedAfter: null, duplicateOf: null, skipped: [], gaveUpAt: null, noLinkAfter: null };
     var consecutiveFails = 0;
     var rateAttempts = 0;
     var templateProven = false; // 当前翻页写法是否已经成功读到过一页
@@ -611,10 +638,11 @@
         endedAfter: note.endedAfter,
         duplicateOf: note.duplicateOf,
         skipped: note.skipped,
-        gaveUpAt: note.gaveUpAt
+        gaveUpAt: note.gaveUpAt,
+        noLinkAfter: note.noLinkAfter
       });
       var lowNote = lowCountText(stored);
-      if (lowNote && note.endedAfter == null) message += " " + lowNote;
+      if (lowNote && note.endedAfter == null && note.noLinkAfter == null) message += " " + lowNote;
       if (!stored.length) {
         return {
           ok: false,
@@ -635,6 +663,7 @@
     // 快速模式:同源 fetch(带登录态)
     while (remaining.length && !state.collectCancelled && !suspicious) {
       var page = remaining[0];
+      if (!hasUrlFor(page)) { note.noLinkAfter = page - 1; remaining = []; break; }
       progress(page);
       var outcome = await fetchAndExtract(urlFor(page), page);
       // 这种翻页写法还没成功读到过一页,网站却说"没有这个网址"(404/410):多半是写法猜错了,
@@ -675,6 +704,7 @@
         return { ok: false, message: paginationFailedText(page, dupPage) };
       }
       storePage(page, outcome.items);
+      learnPageLinks(outcome.pageLinks, page);
       templateProven = true;
       remaining.shift();
       if (opts && opts.stopWhen && opts.stopWhen()) { remaining = []; break; }
@@ -688,6 +718,7 @@
       setCollectProgress(t("backgroundTab"));
       while (remaining.length && !state.collectCancelled) {
         var tabPage = remaining[0];
+        if (!hasUrlFor(tabPage)) { note.noLinkAfter = tabPage - 1; remaining = []; break; }
         var tabItems = [];
         var tabError = "";
         var tabNoCards = false;
@@ -701,6 +732,7 @@
           progress(tabPage);
           var results = await crawlViaTabs([{ page: tabPage, url: urlFor(tabPage) }]);
           var got = results[tabPage] || { items: [], error: "" };
+          learnPageLinks(got.pageLinks, tabPage);
           tabItems = got.items || [];
           tabError = got.error || "";
           tabNoCards = Boolean(got.noCards);
@@ -814,7 +846,10 @@
       var html = await response.text();
       var doc = new DOMParser().parseFromString(html, "text/html");
       var result = engine.applyRule(doc, state.rule, { pageUrl: url, page: page });
-      return { items: result.items || [], cardCount: result.cardCount || 0 };
+      var base = doc.createElement("base");
+      base.href = url;
+      doc.head.appendChild(base); // 让 a.href 按那一页的网址补全
+      return { items: result.items || [], cardCount: result.cardCount || 0, pageLinks: pageLinksIn(doc, null) };
     } catch (error) {
       return { error: String(error && error.message || error), items: [] };
     }
@@ -858,7 +893,7 @@
       var got = {};
       state.tabBatch = {
         onPage: function (message) {
-          got[message.page] = { items: message.items || [], error: message.error || "", noCards: Boolean(message.noCards) };
+          got[message.page] = { items: message.items || [], error: message.error || "", noCards: Boolean(message.noCards), pageLinks: message.pageLinks || null };
         },
         onDone: function () {
           state.tabBatch = null;
@@ -1455,6 +1490,7 @@
         // 页码模式的读取说明:列表在第几页结束、哪些页打开出错被跳过
         listEndedAfter: state.lastCollectNote ? state.lastCollectNote.endedAfter : null,
         stoppedAtPage: state.lastCollectNote ? state.lastCollectNote.gaveUpAt : null,
+        noLinkAfter: state.lastCollectNote ? state.lastCollectNote.noLinkAfter : null,
         skippedPages: state.lastCollectNote ? state.lastCollectNote.skipped.slice() : [],
         slowedDown: state.slowedDown
       },
@@ -1568,6 +1604,17 @@
         actions: [{ id: "retry", label: t("retryPages", [stats.stoppedAtPage]), pages: [stats.stoppedAtPage] }]
       });
     }
+    if (stats.noLinkAfter != null) {
+      addNote({
+        id: "nolink",
+        tone: "info",
+        title: t("noLinkTitle", stats.noLinkAfter),
+        body: t("noLinkBody", { page: stats.noLinkAfter, read: pageCount, count: count }),
+        actions: [{ id: "dismiss", label: t("gotIt") }]
+      });
+    } else {
+      removeNote("nolink");
+    }
     if (stats.listEndedAfter != null) {
       var whole = stats.pages[0] === 1;
       addNote({
@@ -1611,7 +1658,8 @@
       endedAfter: previous ? previous.endedAfter : null,
       duplicateOf: previous ? previous.duplicateOf : null,
       skipped: remainingSkipped.concat(stillSkipped.filter(function (p) { return remainingSkipped.indexOf(p) < 0; })),
-      gaveUpAt: gaveUp ? gaveUp : (previous && previous.gaveUpAt && !state.pagesData.has(previous.gaveUpAt) ? previous.gaveUpAt : null)
+      gaveUpAt: gaveUp ? gaveUp : (previous && previous.gaveUpAt && !state.pagesData.has(previous.gaveUpAt) ? previous.gaveUpAt : null),
+      noLinkAfter: previous ? previous.noLinkAfter : null
     };
     state.lastRequested = keepRequested;
     removeNote("skipped");
