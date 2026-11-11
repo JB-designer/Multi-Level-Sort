@@ -7,6 +7,7 @@
  */
 import { normalizeRules, localDayKey } from "./sort.js";
 import { getBucketRank, getBand } from "./buckets.js";
+import { siteNumberText } from "./bands.js";
 import { formatMetricValue, isMissingMetricValue } from "./fields.js";
 import { t, isZh } from "./i18n.js";
 
@@ -230,10 +231,7 @@ export function formatCardValue(item, field) {
   const raw = item.metricRaw?.[field.id];
   if (field.type === "number" && Number.isFinite(Number(value))) {
     // 网站自己写成 "41.2K" / "3.2万" / "12 MB" 时照网站的写法显示,否则显示完整数字
-    const short = String(raw || "").trim();
-    return /^[-+]?[\d.,\s'’]*\d\s*(?:k|m|b|万|萬|亿|億|千|[kmgt]i?b|bytes?)$/i.test(short)
-      ? short
-      : Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+    return siteNumberText(raw) || Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
   }
   if (field.type === "date") {
     const day = localDayKey(value);

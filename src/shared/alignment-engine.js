@@ -47,8 +47,62 @@
   //   "1,2K" / "2,5" = 小数逗号;"1.234.567,89" / "1,234,567.89" = 最后一个符号是小数点。
   //   "1.234K" 这类带单位的点号仍按小数读;"0.123" 永远是小数。
   var NUM_TOKEN_SRC = "(?:\\d{1,3}(?:[ '’]\\d{3})+(?!\\d)(?:[.,]\\d+)?|\\d+(?:[.,]\\d+)*)";
+
+  // 各语言的数字单位(万、만、ألف、Mio.…)不靠手写词典:让浏览器自带的数字格式资料(Intl / CLDR)
+  // 按网页语言和浏览器语言把 1,000 … 10^12 写成简写,写出来的单位就是这门语言的单位。
+  function localeNumberUnits(langs) {
+    var out = [];
+    var seen = {};
+    if (typeof Intl === "undefined" || !Intl.NumberFormat) return out;
+    for (var l = 0; l < langs.length; l += 1) {
+      for (var d = 0; d < 2; d += 1) {
+        var fmt;
+        try { fmt = new Intl.NumberFormat(langs[l], { notation: "compact", compactDisplay: d ? "long" : "short" }); } catch (e) { continue; }
+        if (!fmt.formatToParts) continue;
+        for (var p = 3; p <= 12; p += 1) {
+          var parts = fmt.formatToParts(Math.pow(10, p));
+          var unit = "";
+          var digits = "";
+          for (var i = 0; i < parts.length; i += 1) {
+            if (parts[i].type === "compact") unit += parts[i].value;
+            else if (parts[i].type === "integer") digits += parts[i].value;
+          }
+          unit = String(unit).replace(/\s+/g, " ").trim().toLowerCase();
+          var lead = Number(digits);
+          if (!unit || !lead || /\d/.test(unit) || seen[unit]) continue;
+          var multiplier = Math.pow(10, p) / lead;
+          if (!(multiplier >= 1000) || Math.log10(multiplier) % 1) continue;
+          seen[unit] = true;
+          out.push({ suffix: unit, multiplier: multiplier });
+        }
+      }
+    }
+    return out;
+  }
+
+  var BASE_UNIT_MULTIPLIERS = {
+    k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, b: 1e9, billion: 1e9,
+    "万": 1e4, "萬": 1e4, "亿": 1e8, "億": 1e8
+  };
+  var PAGE_LANGS = [];
+  try {
+    var pageLang = typeof document !== "undefined" && document.documentElement && document.documentElement.lang;
+    if (pageLang) PAGE_LANGS.push(pageLang);
+    if (typeof navigator !== "undefined" && navigator.language) PAGE_LANGS.push(navigator.language);
+  } catch (e) { /* 没有页面环境(测试)时只用固定单位 */ }
+  // 固定单位表之外、这门语言才有的单位;已经认识的单位不重复加
+  var EXTRA_UNITS = localeNumberUnits(PAGE_LANGS).filter(function (u) { return !BASE_UNIT_MULTIPLIERS[u.suffix]; });
+  var UNIT_MULTIPLIERS = {};
+  for (var bu in BASE_UNIT_MULTIPLIERS) UNIT_MULTIPLIERS[bu] = BASE_UNIT_MULTIPLIERS[bu];
+  EXTRA_UNITS.forEach(function (u) { UNIT_MULTIPLIERS[u.suffix] = u.multiplier; });
+  function escapeUnit(text) { return text.replace(/[.*+?^${}()|[\]\\\/-]/g, "\\$&"); }
+  // 以拉丁字母结尾的单位后面不能再紧跟字母("3 bedrooms" 的 b 不是单位)
+  var EXTRA_UNIT_ALT = EXTRA_UNITS.map(function (u) { return u.suffix; })
+    .sort(function (a, b) { return b.length - a.length; })
+    .map(function (u) { return escapeUnit(u) + (/[a-z.]$/i.test(u) ? "(?![a-z])" : ""); })
+    .join("|");
   // 单位字母(k/m/b…)后面紧跟着别的字母时不算单位:"3 bedrooms" 的 b 是单词的一部分,"3m"、"1.2k" 才是单位
-  var UNIT_SRC = "(?:万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
+  var UNIT_SRC = "(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
   var NUMBER_RE = new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*" + UNIT_SRC + "?\\b", "i");
   var BYTE_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*(bytes?|kb|mb|gb|tb)\\b", "i");
   var PERCENT_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*%");
@@ -95,17 +149,14 @@
     var pct = text.match(PERCENT_RE);
     if (pct) return readNumberToken(pct[1], false);
     // 注意:\b 对中文单位(万/亿)无效,用负向前瞻判定后缀边界
-    var match = text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(万|萬|亿|億|k|m|b|thousand|million|billion)?(?![a-zA-Z0-9])", "i"));
+    var match = EXTRA_UNIT_ALT ? text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(" + EXTRA_UNIT_ALT + ")")) : null;
+    if (!match) match = text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(万|萬|亿|億|k|m|b|thousand|million|billion)?(?![a-zA-Z0-9])", "i"));
     if (!match) return null;
-    var suffix = (match[3] || "").toLowerCase();
+    var suffix = normalizeText(match[3] || "").toLowerCase();
     var num = readNumberToken(match[2], Boolean(suffix));
     if (num == null || !isFinite(num)) return null;
     if (match[1] === "-") num = -num;
-    var multipliers = {
-      k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, b: 1e9, billion: 1e9,
-      "万": 1e4, "萬": 1e4, "亿": 1e8, "億": 1e8
-    };
-    var result = num * (multipliers[suffix] || 1);
+    var result = num * (UNIT_MULTIPLIERS[suffix] || 1);
     return suffix ? Math.round(result) : result;
   }
 
@@ -546,7 +597,7 @@
 
   function countNumberish(text) {
     var stripped = stripDateAndDuration(text);
-    var matches = stripped.match(new RegExp(NUM_TOKEN_SRC + "\\s*(?:万|萬|亿|億|(?:kb|mb|gb|k|m|b)(?![a-z]))?", "gi"));
+    var matches = stripped.match(new RegExp(NUM_TOKEN_SRC + "\\s*(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "万|萬|亿|億|(?:kb|mb|gb|k|m|b)(?![a-z]))?", "gi"));
     return matches ? Math.min(matches.length, 8) : 0;
   }
 
@@ -2181,7 +2232,7 @@
     for (var b = 0; b < blocks.length; b += 1) {
       var e = blocks[b];
       e.text = normalizeText(e.text);
-      if (e.text.length < 2 || NUMERIC_TEXT_RE.test(e.text)) continue;
+      if (e.text.length < 2 || NUMERIC_TEXT_RE.test(EXTRA_UNIT_ALT ? e.text.replace(new RegExp(EXTRA_UNIT_ALT, "gi"), "") : e.text)) continue;
       if (e.foreignArea >= e.area * 0.999) continue;
       e.lines = Object.keys(e.tops).length;
       if (!best) { best = e; continue; }

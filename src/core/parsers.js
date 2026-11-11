@@ -24,7 +24,45 @@ export function normalizeText(value) {
 //   "1,234" / "1.234" / "1 234" = 1234(三位一组的千分位);"1,2K" / "2,5" = 小数逗号;
 //   "1.234,5" / "1,234.5" = 最后一个符号是小数点;"1.234K" 这类带单位的点号按小数读。
 const NUM_TOKEN_SRC = "(?:\\d{1,3}(?:[ '’]\\d{3})+(?!\\d)(?:[.,]\\d+)?|\\d+(?:[.,]\\d+)*)";
-const UNIT_SRC = "亿|億|万|萬|千|billion|million|thousand|[kmb]";
+// 固定单位表之外,用浏览器自带的数字格式资料(Intl / CLDR)补上网页语言和浏览器语言的单位(만、ألف、Mio.…),
+// 和 alignment-engine.js 的 localeNumberUnits 同一规则
+export function localeNumberUnits(langs) {
+  const out = [];
+  if (typeof Intl === "undefined" || !Intl.NumberFormat) return out;
+  for (const lang of langs) {
+    for (const compactDisplay of ["short", "long"]) {
+      let fmt;
+      try { fmt = new Intl.NumberFormat(lang, { notation: "compact", compactDisplay }); } catch { continue; }
+      for (let p = 3; p <= 12; p += 1) {
+        const parts = fmt.formatToParts(10 ** p);
+        const unit = parts.filter((x) => x.type === "compact").map((x) => x.value).join("").replace(/\s+/g, " ").trim().toLowerCase();
+        const lead = Number(parts.filter((x) => x.type === "integer").map((x) => x.value).join(""));
+        if (!unit || !lead || /\d/.test(unit) || out.some((u) => u.suffix === unit)) continue;
+        const multiplier = 10 ** p / lead;
+        if (!(multiplier >= 1000) || Math.log10(multiplier) % 1) continue;
+        out.push({ suffix: unit, multiplier });
+      }
+    }
+  }
+  return out;
+}
+
+function pageLanguages() {
+  const langs = [];
+  try {
+    if (typeof document !== "undefined" && document.documentElement?.lang) langs.push(document.documentElement.lang);
+    if (typeof navigator !== "undefined" && navigator.language) langs.push(navigator.language);
+  } catch { /* 没有页面环境 */ }
+  return langs;
+}
+
+const EXTRA_UNITS = localeNumberUnits(pageLanguages()).filter((u) => !NUMBER_UNITS.some((n) => n.suffix === u.suffix));
+NUMBER_UNITS.push(...EXTRA_UNITS);
+const EXTRA_UNIT_ALT = EXTRA_UNITS.map((u) => u.suffix)
+  .sort((a, b) => b.length - a.length)
+  .map((u) => u.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&") + (/[a-z.]$/i.test(u) ? "(?![a-z])" : ""))
+  .join("|");
+const UNIT_SRC = `${EXTRA_UNIT_ALT ? `${EXTRA_UNIT_ALT}|` : ""}亿|億|万|萬|千|(?:billion|million|thousand|[kmb])(?![a-z])`;
 const LEGACY_NUM_RE = /^\d+(?:,\d{3})*(?:\.\d+)?/;
 
 export function readNumberToken(token, hasUnit = false) {

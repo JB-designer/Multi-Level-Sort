@@ -7,7 +7,7 @@
  *   - 档的序号 rank:1 = 数值最小的一档,越大越靠上;没有数值 → null(排最后)。
  *   - 日期不在这里分档:日期的"相近"= 本地的同一天(见 sort.js)。
  */
-import { computeBandEdges, describeBands, distinctSorted, bandOf, looksLikeStarRating } from "./bands.js";
+import { computeBandEdges, describeBands, distinctSorted, bandOf, looksLikeStarRating, siteNumberText } from "./bands.js";
 
 export const BUCKET_STATE_VERSION = 4;
 
@@ -31,7 +31,7 @@ export function buildBucketState(items = [], fieldCatalog = [], config = {}) {
   for (const field of fieldCatalog) {
     if (field.type !== "number" && field.type !== "duration") continue;
     const values = collectNumericValues(items, field.id);
-    fields[field.id] = buildFieldBands(field, values);
+    fields[field.id] = buildFieldBands(field, values, field.type === "number" ? siteTextsByValue(items, field.id) : null);
   }
   return {
     version: BUCKET_STATE_VERSION,
@@ -42,14 +42,14 @@ export function buildBucketState(items = [], fieldCatalog = [], config = {}) {
   };
 }
 
-export function buildFieldBands(field, values) {
+export function buildFieldBands(field, values, textByValue = null) {
   const distinct = distinctSorted(values);
   let exactReason = "";
   if (field.type === "duration") exactReason = "duration";
   else if (looksLikeStarRating(values, `${field.label || ""} ${field.canonicalId || ""}`)) exactReason = "rating";
   else if (values.length < 10 || distinct.length <= 7) exactReason = "few";
   const edges = exactReason ? distinct.slice(1) : computeBandEdges(values);
-  const bands = describeBands(values, edges);
+  const bands = describeBands(values, edges, textByValue ? (v) => textByValue.get(v) || "" : null);
   return {
     fieldId: field.id,
     label: field.label,
@@ -99,4 +99,16 @@ function collectNumericValues(items, fieldId) {
     if (Number.isFinite(value)) values.push(value);
   }
   return values;
+}
+
+// 每个数值在卡片上的原文(网站自己的写法);同一个数值写法不一时取第一次见到的
+function siteTextsByValue(items, fieldId) {
+  const map = new Map();
+  for (const item of items) {
+    const value = Number(item.metrics?.[fieldId]);
+    if (!Number.isFinite(value) || map.has(value)) continue;
+    const text = siteNumberText(item.metricRaw?.[fieldId]);
+    if (text) map.set(value, text);
+  }
+  return map;
 }

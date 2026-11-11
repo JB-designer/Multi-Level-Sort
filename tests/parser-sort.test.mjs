@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   parseDate,
   parseDuration,
+  localeNumberUnits,
   parseLabeledNumber,
   parseNumber
 } from "../src/core/parsers.js";
@@ -54,14 +55,17 @@ test("ten different values or fewer than ten cards are sorted exactly (no bands)
   assert.equal(getBucketRank(7, state.fields.views), 7);
 });
 
-test("bands come from all cards: 9,000–10,000 still splits into several round bands", () => {
+test("bands come from all cards: 9,000–10,000 still splits into several bands titled by their real values", () => {
   const values = Array.from({ length: 150 }, (_, i) => 9000 + ((i * 37) % 1001));
   const items = values.map((favorites, index) => dynamicItem(`item ${index}`, { favorites }, index));
   const state = buildBucketState(items, buildFieldCatalog(items), {});
   const field = state.fields.favorites;
   assert.equal(field.exact, false);
   assert.ok(field.bands.length >= 3 && field.bands.length <= 7, `got ${field.bands.length} bands`);
-  for (const band of field.bands) assert.match(band.label, /^9,\d00–(?:9|10),\d{3}$|^9,\d{3}$|^10,000$/);
+  for (const band of field.bands) {
+    const real = band.min === band.max ? band.min.toLocaleString("en-US") : `${band.min.toLocaleString("en-US")}–${band.max.toLocaleString("en-US")}`;
+    assert.equal(band.label, real);
+  }
 });
 
 test("bucket sorting compares priority buckets before the next rule", () => {
@@ -606,4 +610,15 @@ test("menu and section labels are filtered out of sortable fields", () => {
   assert.ok(sortableIds.includes("views"));
   assert.ok(sortableIds.includes("durationSeconds"));
   assert.equal(sortableIds.some((id) => /most-viewed|editors-choice|favorited|making-of|channel/i.test(id)), false);
+});
+
+test("number units of any language come from the browser's own number formats, no word list", () => {
+  const unit = (lang, suffix) => localeNumberUnits([lang]).find((u) => u.suffix === suffix)?.multiplier;
+  assert.equal(unit("ko", "만"), 10000);
+  assert.equal(unit("ko", "억"), 100000000);
+  assert.equal(unit("de", "mio."), 1000000);
+  assert.equal(unit("ja", "億"), 100000000);
+  // 拉丁字母单位后面紧跟字母时仍不算单位
+  assert.equal(parseNumber("3 bedrooms"), 3);
+  assert.equal(parseNumber("1.2k"), 1200);
 });

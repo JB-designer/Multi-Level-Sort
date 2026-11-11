@@ -399,7 +399,14 @@ function roundFloorLabel(x, prec) {
   return x;
 }
 
-export function describeBands(values, edges) {
+// 网站自己写成 "41.2K" / "3.2万" / "12 MB" 这类"数字 + 单位"时,原样拿来显示(不换算、不翻译);否则返回空
+export function siteNumberText(raw) {
+  const short = String(raw || "").trim();
+  return /^[-+]?[\d.,\s'’]*\d\s*(?:k|m|b|万|萬|亿|億|千|[kmgt]i?b|bytes?)$/i.test(short) ? short : "";
+}
+
+// textOf(value):这个数值在卡片上的原文(网站自己的写法);标题照抄组里最小和最大那两张卡片的原文
+export function describeBands(values, edges, textOf) {
   const present = (values || []).filter((v) => Number.isFinite(v));
   const prec = precisionOf(present);
   const groups = groupsOf(present, edges);
@@ -423,7 +430,9 @@ export function describeBands(values, edges) {
           if (edges[index] > 2 * mx && up < high && up >= mx) high = up;
         }
       }
-      const label = mn === mx ? formatBandNumber(mn, prec) : `${formatBandNumber(low, prec)}–${formatBandNumber(high, prec)}`;
+      // 标题写这一组卡片真实的最低到最高值,照网站的写法(James 2026-11-11:分界线之间的整段区间会比组里的卡片宽)
+      const show = (v) => (textOf && textOf(v)) || formatBandNumber(v, prec);
+      const label = mn === mx ? show(mn) : `${show(mn)}–${show(mx)}`;
       return { index, min: mn, max: mx, low, high, count: vs.length, label };
     });
 }

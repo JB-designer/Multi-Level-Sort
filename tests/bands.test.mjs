@@ -6,8 +6,7 @@ import {
   computeBandEdges,
   describeBands,
   distinctSorted,
-  looksLikeStarRating
-} from "../src/core/bands.js";
+  looksLikeStarRating, siteNumberText } from "../src/core/bands.js";
 import { buildBucketState } from "../src/core/buckets.js";
 import { applyFiltersAndSort } from "../src/core/sort.js";
 
@@ -48,11 +47,11 @@ test("bands: a giant outlier gets its own top band", () => {
   assert.deepEqual(g.get(Math.max(...g.keys())), [2000000]);
 });
 
-test("bands: labels are round ranges, single values stay single, top band ends on a round number", () => {
+test("bands: labels show the group's real lowest–highest card values, single values stay single", () => {
   const values = [41200, 48600, 44100, 31500, 37900, 35000, 29900, 22300, 21000, 25000, 23000, 18000, 15000, 12000, 9000, 8000, 5000, 3000, 2000, 1000];
   const bands = describeBands(values, computeBandEdges(values));
-  assert.equal(bands[0].label, "40,000–49,900");
-  assert.equal(bands[1].label, "30,000–39,900");
+  assert.equal(bands[0].label, "41,200–48,600");
+  assert.equal(bands[1].label, "31,500–37,900");
   assert.equal(bands.reduce((sum, band) => sum + band.count, 0), values.length);
   const single = describeBands([10, 10, 10, 3], [10]);
   assert.equal(single[0].label, "10");
@@ -125,4 +124,16 @@ test("bands: property test on 3,000 random lists", () => {
   }
   assert.ok(lists > 2900);
   assert.deepEqual(problems, { overlap: 0, rule3x: 0, crowded: 0, orderDependent: 0, notRound: 0, over12Narrow: 0 });
+});
+
+test("bands: titles copy the site's own writing of the lowest and highest card", () => {
+  const values = [2592000, 4989000, 1339000, 1682000, 333000, 850000, 481000, 488000, 511000, 693000, 45000, 61000];
+  const raw = new Map(values.map((v) => [v, `${(v / 10000).toFixed(1)}万`]));
+  const bands = describeBands(values, computeBandEdges(values), (v) => raw.get(v));
+  for (const band of bands) {
+    assert.equal(band.label, band.min === band.max ? raw.get(band.min) : `${raw.get(band.min)}–${raw.get(band.max)}`);
+  }
+  assert.equal(siteNumberText("259.2万"), "259.2万");
+  assert.equal(siteNumberText("41.2K"), "41.2K");
+  assert.equal(siteNumberText("1,234 views"), "");
 });

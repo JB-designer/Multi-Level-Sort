@@ -17,7 +17,7 @@ function view(sortRules = rules) {
 
 test("results: a divider at each band start, missing values last, counts add up", () => {
   const v = view();
-  assert.equal(v.sections[0].label, "下载量 40,000–49,900");
+  assert.equal(v.sections[0].label, "下载量 41,200–48,600");
   assert.equal(v.sections[0].count, 3);
   const last = v.sections[v.sections.length - 1];
   assert.equal(last.kind, "missing");
