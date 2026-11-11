@@ -284,6 +284,9 @@
       item.uid = page + ":" + index;
       return item;
     });
+    // 每张卡片在这一页里的身份(链接认不出卡片时用完整链接区分,见 pageIdentities)
+    var ids = pageIdentities(stamped);
+    stamped.forEach(function (item, index) { item.linkId = ids[index]; });
     state.pagesData.set(page, stamped);
   }
 
@@ -302,7 +305,7 @@
     var merged = [];
     var duplicates = 0;
     pool().forEach(function (item) {
-      var key = contentSignature(item) + "|" + (item.title || "");
+      var key = cardKey(item);
       if (seen[key]) { duplicates += 1; return; }
       seen[key] = true;
       merged.push(item);
@@ -574,17 +577,26 @@
     return false;
   }
 
-  function pageSignatures(items) {
-    return (items || []).map(contentSignature);
+  function storedIdentities(items) {
+    return (items || []).map(function (item) { return item.linkId || contentSignature(item); });
+  }
+
+  // 链接 + 标题(原签名加标题):链接用完整写法区分卡片时,再用它把一道关,
+  // 防止链接里每次都变的跟踪参数让真正重复的一页看起来像新的一页
+  function titledSignatures(items) {
+    return (items || []).map(function (item) { return contentSignature(item) + "|" + (item.title || ""); });
   }
 
   // 新收的页和已有某页内容雷同 → 翻页网址没生效,返回撞上的页码
   function looksLikeExistingPage(items) {
     if (!items || !items.length) return null;
-    var signatures = pageSignatures(items);
+    var identities = pageIdentities(items);
+    var titled = titledSignatures(items);
     var pages = Array.from(state.pagesData.keys());
     for (var i = 0; i < pages.length; i += 1) {
-      if (core.pagination.pagesLookIdentical(signatures, pageSignatures(state.pagesData.get(pages[i])))) {
+      var stored = state.pagesData.get(pages[i]);
+      if (core.pagination.pagesLookIdentical(identities, storedIdentities(stored)) ||
+          core.pagination.pagesLookIdentical(titled, titledSignatures(stored))) {
         return pages[i];
       }
     }
@@ -868,8 +880,7 @@
     if (items.length < Math.max(3, state.cardCount * 0.4)) return true;
     var signatures = {};
     var duplicated = 0;
-    items.forEach(function (item) {
-      var signature = contentSignature(item);
+    pageIdentities(items).forEach(function (signature) {
       if (signatures[signature]) duplicated += 1;
       signatures[signature] = true;
     });
@@ -889,6 +900,23 @@
     } catch (e) {
       return (item.title || "") + "|" + (item.thumbnailUrl || "");
     }
+  }
+
+  // 完整链接(路径 + ? 后面的部分,不含 #):只在原签名认不出卡片时才用
+  function fullLink(item) {
+    if (!item.videoUrl) return contentSignature(item);
+    try {
+      var url = new URL(item.videoUrl, location.href);
+      return url.pathname + url.search;
+    } catch (e) {
+      return contentSignature(item);
+    }
+  }
+
+  // 一页卡片的身份:平时就是原签名;一页里大量卡片签名相同、完整链接却不同时,撞车的卡片改用完整链接
+  function pageIdentities(items) {
+    items = items || [];
+    return core.pagination.distinguishCollidingLinks(items.map(contentSignature), items.map(fullLink));
   }
 
   function crawlViaTabs(entries) {
@@ -952,7 +980,7 @@
   var SCROLL_KEYS = { PageDown: 1, PageUp: 1, ArrowDown: 1, ArrowUp: 1, Home: 1, End: 1, " ": 1 };
 
   function cardKey(item) {
-    return contentSignature(item) + "|" + (item.title || "");
+    return (item.linkId || contentSignature(item)) + "|" + (item.title || "");
   }
 
   // 有页码的网站:逐页读取直到读满目标张数

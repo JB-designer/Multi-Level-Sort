@@ -144,6 +144,33 @@ function learnLinearParams(numericAnchors, baseUrl) {
   return learned;
 }
 
+// 原来的卡片签名认不出卡片时的补充规则(原签名规则本身不变):
+// 一页里"签名相同、完整链接却不同"的多出来的卡片超过 share(和掺假判定同一个 30%),
+// 说明链接的区别只在原签名不看的部分(比如 /?item=12)。这时只给撞车的卡片改用完整链接区分;
+// 没撞车的卡片、没触发的页面,签名和以前完全一样。
+// signatures / fullLinks:同一页卡片按顺序的原签名与完整链接。返回同样顺序的身份数组。
+export function distinguishCollidingLinks(signatures, fullLinks, share = 0.3) {
+  const n = signatures?.length || 0;
+  if (!n) return [];
+  const groups = new Map();
+  signatures.forEach((signature, index) => {
+    if (!groups.has(signature)) groups.set(signature, new Set());
+    groups.get(signature).add(fullLinks[index] || "");
+  });
+  const counts = new Map();
+  for (const signature of signatures) counts.set(signature, (counts.get(signature) || 0) + 1);
+  let extra = 0;
+  const blind = new Set();
+  for (const [signature, links] of groups) {
+    if (links.size > 1) {
+      blind.add(signature);
+      extra += counts.get(signature) - 1;
+    }
+  }
+  if (!blind.size || extra / n <= share) return signatures.slice();
+  return signatures.map((signature, index) => (blind.has(signature) ? `${signature}#${fullLinks[index] || ""}` : signature));
+}
+
 // 两页内容是否"基本是同一页"(签名重合度 ≥ threshold)——用于识别翻页失败
 export function pagesLookIdentical(signaturesA, signaturesB, threshold = 0.8) {
   if (!signaturesA?.length || !signaturesB?.length) return false;
