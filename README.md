@@ -6,7 +6,7 @@ Multi-Level Sort is a Chrome extension that uses multiple metrics—such as view
 
 **One metric doesn’t tell the whole story.** High view counts don’t necessarily mean people liked something, and lots of comments may reflect controversy rather than appreciation. Considering multiple metrics helps you find content that better matches your preferences.
 
-**Chrome Web Store: To be added**
+**Chrome Web Store: https://chromewebstore.google.com/detail/apjnpmlplniekeacofpapeefcnaaeana?utm_source=item-share-cb**
 
 | Set your sorting priorities | Explore the sorted results |
 |---|---|
