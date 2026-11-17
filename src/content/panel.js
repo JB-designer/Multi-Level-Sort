@@ -131,6 +131,16 @@
     // 页面上既没有页码链接、也没有"下一页"、也没写总页数(常见于一直往下滑的网站)→ 只能读当前页,
     // 不再摆出读不到东西的翻页控件。页码链接 = pageLinks():卡片里的数字、单独一个不像下一页的数字不算
     state.noPaging = !state.totalPages && page === 1 && !links.length && !nextPageLink();
+    // 补充规则(只在上面什么都没找到时才看):页码是按钮、不是链接的网站
+    state.pagedByButtons = false;
+    if (state.noPaging) {
+      var buttons = buttonPager(document);
+      if (buttons && buttons.current === page) {
+        state.totalPages = Math.max(buttons.total, page);
+        state.noPaging = false;
+        state.pagedByButtons = true;
+      }
+    }
     state.pageRange = core.pageRange.createPageRange({ current: page, total: state.totalPages });
     stopScrollSession();
     state.readTab = state.noPaging ? "cards" : "pages";
@@ -258,6 +268,33 @@
       if ((node.textContent || "").length <= 600) found.push(node);
     });
     return found.slice(0, 4);
+  }
+
+  // 页码是按钮(没有链接)的分页条:在导航区(<nav> 或 role="navigation")里,
+  // 有一个标着"当前页"(aria-current)的数字,另外至少还有 2 个数字 → 当前页 = 标着的数字,总页数 = 最大的数字。
+  // 只看页面结构和无障碍标记,不认任何文字。找不到返回 null。
+  function buttonPager(root) {
+    var navs = root.querySelectorAll("nav,[role='navigation']");
+    for (var i = 0; i < navs.length; i += 1) {
+      var nav = navs[i];
+      if (host && host.contains(nav)) continue;
+      var marked = nav.querySelector("[aria-current]:not([aria-current='false'])");
+      if (!marked) continue;
+      var currentText = (marked.textContent || "").trim();
+      if (!/^\d{1,5}$/.test(currentText)) continue;
+      var current = Number(currentText);
+      var others = 0;
+      var max = current;
+      nav.querySelectorAll("*").forEach(function (node) {
+        if (node.children.length || node === marked || marked.contains(node)) return;
+        var text = (node.textContent || "").trim();
+        if (!/^\d{1,5}$/.test(text)) return;
+        others += 1;
+        if (Number(text) > max) max = Number(text);
+      });
+      if (others >= 2) return { current: current, total: max };
+    }
+    return null;
   }
 
   // "下一页" 链接:没有 "1 2 3" 数字链接、只有 next 按钮的网站,靠它推出翻页网址
@@ -709,6 +746,10 @@
         break;
       }
       var dupPage = looksLikeExistingPage(outcome.items);
+      // 页码是按钮的网站:拿回来的那一页自己标着的当前页不是要读的这一页 → 翻页网址没生效
+      if (dupPage == null && state.pagedByButtons && outcome.pagerCurrent != null && outcome.pagerCurrent !== page) {
+        dupPage = outcome.pagerCurrent;
+      }
       if (dupPage != null && dupPage !== page) {
         if (advanceTemplate()) {
           setCollectProgress(t("dupRetry", { page: page, dup: dupPage }));
@@ -864,7 +905,8 @@
       var base = doc.createElement("base");
       base.href = url;
       doc.head.appendChild(base); // 让 a.href 按那一页的网址补全
-      return { items: result.items || [], cardCount: result.cardCount || 0, pageLinks: pageLinksIn(doc, null, cardRootsOf(doc)) };
+      var fetchedPager = state.pagedByButtons ? buttonPager(doc) : null;
+      return { items: result.items || [], cardCount: result.cardCount || 0, pageLinks: pageLinksIn(doc, null, cardRootsOf(doc)), pagerCurrent: fetchedPager ? fetchedPager.current : null };
     } catch (error) {
       return { error: String(error && error.message || error), items: [] };
     }
