@@ -141,9 +141,20 @@
         state.pagedByButtons = true;
       }
     }
+    // 补充规则(只在网址里没有页码、页面上也没有页码链接时才看):分页条标着的当前页不是第 1 页
+    // → 这个网站翻页时网址不变,插件用网址读不到别的页 → 只排序本页(默认「按页数」= 本页)
+    state.urlSamePager = null;
+    if (urlPageNumber() == null && !links.length && !state.pagedByButtons) {
+      var marked = buttonPager(document);
+      if (marked && !marked.linked && marked.current !== page) {
+        state.urlSamePager = { current: marked.current, total: marked.total };
+        state.totalPages = null;
+        state.noPaging = true;
+      }
+    }
     state.pageRange = core.pageRange.createPageRange({ current: page, total: state.totalPages });
     stopScrollSession();
-    state.readTab = state.noPaging ? "cards" : "pages";
+    state.readTab = state.noPaging && !state.urlSamePager ? "cards" : "pages";
     if (state.noPaging) {
       state.pageRange = core.pageRange.chooseThisPage(state.pageRange);
     }
@@ -285,14 +296,16 @@
       var current = Number(currentText);
       var others = 0;
       var max = current;
+      var linked = !!marked.closest("a[href]");
       nav.querySelectorAll("*").forEach(function (node) {
         if (node.children.length || node === marked || marked.contains(node)) return;
         var text = (node.textContent || "").trim();
         if (!/^\d{1,5}$/.test(text)) return;
+        if (node.closest("a[href]")) linked = true;
         others += 1;
         if (Number(text) > max) max = Number(text);
       });
-      if (others >= 2) return { current: current, total: max };
+      if (others >= 2) return { current: current, total: max, linked: linked };
     }
     return null;
   }
@@ -370,6 +383,11 @@
   }
 
   function currentPageNumber() {
+    return urlPageNumber() || 1;
+  }
+
+  // 网址里写着的页码;网址里没有页码时为 null
+  function urlPageNumber() {
     try {
       var parsed = new URL(location.href);
       var keys = ["page", "p", "paged", "pg"];
@@ -380,7 +398,7 @@
       var segment = parsed.pathname.match(/\/(?:page|p)[-/]?(\d{1,5})(?:\.[a-z0-9]{2,5})?(?:\/|$)/i);
       if (segment) return Number(segment[1]);
     } catch (e) { /* ignore */ }
-    return 1;
+    return null;
   }
 
   /* ================= 字段与排序规则 ================= */
@@ -2225,6 +2243,7 @@
 
   function renderScope() {
     if (!state.cardCount) return;
+    if (state.urlSamePager) { setScope(core.pageRange.describeScope({ current: state.urlSamePager.current, cardCount: state.cardCount, total: state.urlSamePager.total })); return; }
     if (state.noPaging) { setScope(t("scopeNoPaging", state.cardCount)); return; }
     setScope(core.pageRange.describeScope({ current: state.currentPage, cardCount: state.cardCount, total: state.totalPages }));
   }
@@ -2627,7 +2646,7 @@
       var fixed = el("div", "line");
       fixed.appendChild(el("b", "fixedv", t("fixedOnePage")));
       box.appendChild(fixed);
-      box.appendChild(el("div", "hint", t("fixedOnePageHint", state.cardCount)));
+      box.appendChild(el("div", "hint", state.urlSamePager ? t("fixedSameUrlHint", state.cardCount) : t("fixedOnePageHint", state.cardCount)));
       return;
     }
     box.className = "box";
