@@ -397,7 +397,11 @@
 
   var CLASS_TOKEN_SKIP_RE = /^(?:js-|is-|has-|was-|active|hover|focus|selected|open|closed|show|hide|hidden|visible|loaded|loading|lazy|first|last|odd|even|left|right|top|bottom|clearfix|fade|in|out|on|off)$|\d{3,}|^-|^_$/i;
 
-  function classTokensOf(element) {
+  // forPath = 用在卡片内部的位置路径里:路径用 > : @ # ~ 当分隔符,含这些符号的 class
+  // (如 "@container"、"bg-[#fff]"、"[&>svg]:size-4")会把路径拆错,跳过它们
+  var PATH_UNSAFE_TOKEN_RE = /[@#>~\[\]]/;
+
+  function classTokensOf(element, forPath) {
     var raw = element.getAttribute ? (element.getAttribute("class") || "") : "";
     var tokens = normalizeText(raw).split(" ");
     var rating = RATING_IDENTITY_RE.test(raw);
@@ -408,6 +412,7 @@
       // 评分元素 class 里的分数("star-rating Three"、"rating-4")每张卡不同,不能算进位置
       if (rating && (NUMBER_WORDS[token.toLowerCase()] != null || RATING_TOKEN_RE.test(token))) continue;
       if (CLASS_TOKEN_SKIP_RE.test(token)) continue;
+      if (forPath && PATH_UNSAFE_TOKEN_RE.test(token)) continue;
       if (/\d/.test(token) && /[a-f0-9]{5,}/i.test(token)) continue; // css-module hash
       kept.push(token.toLowerCase());
     }
@@ -415,18 +420,22 @@
     return kept;
   }
 
-  function sigOf(element) {
+  function sigOf(element, forPath) {
     var tag = (element.tagName || "").toLowerCase();
-    var tokens = classTokensOf(element);
+    var tokens = classTokensOf(element, forPath);
     return tokens.length ? tag + "." + tokens.join(".") : tag;
   }
 
+  function pathSigOf(element) {
+    return sigOf(element, true);
+  }
+
   function indexAmongSameSig(element) {
-    var sig = sigOf(element);
+    var sig = pathSigOf(element);
     var index = 0;
     var node = element;
     while ((node = node.previousElementSibling)) {
-      if (sigOf(node) === sig) index += 1;
+      if (pathSigOf(node) === sig) index += 1;
     }
     return index;
   }
@@ -435,7 +444,7 @@
     var segments = [];
     var node = element;
     while (node && node !== cardRoot) {
-      segments.unshift(sigOf(node) + ":" + indexAmongSameSig(node));
+      segments.unshift(pathSigOf(node) + ":" + indexAmongSameSig(node));
       node = node.parentElement;
     }
     if (node !== cardRoot) return null; // element 不在 card 内
@@ -454,7 +463,7 @@
       var seen = 0;
       var child = node.firstElementChild;
       while (child) {
-        if (sigOf(child) === sig) {
+        if (pathSigOf(child) === sig) {
           if (seen === wanted) { found = child; break; }
           seen += 1;
         }
@@ -758,7 +767,7 @@
       var ordered = [];
       var forward = element.firstElementChild;
       while (forward) {
-        var sig = sigOf(forward);
+        var sig = pathSigOf(forward);
         var idx = childIndexes[sig] || 0;
         childIndexes[sig] = idx + 1;
         ordered.push({ node: forward, seg: sig + ":" + idx });

@@ -193,7 +193,7 @@ function closeWorkerTab(requesterTabId) {
 // 发起排序的那个页面被关掉 → 它的后台标签页也关掉
 chrome.tabs.onRemoved.addListener((tabId) => closeWorkerTab(tabId));
 
-async function startTabCrawl({ urls, rule }, requesterTabId) {
+async function startTabCrawl({ urls, rule, limits }, requesterTabId) {
   if (!requesterTabId || !Array.isArray(urls) || !urls.length) return;
   cancelFlags.set(requesterTabId, false);
 
@@ -209,18 +209,19 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
       let noCards = false; // 页面正常打开,但一直没有出现卡片(多半是列表到头了)
       let pageLinks = null; // 这一页上文字是数字的链接(逐个点链接翻页的网站靠它找下一页)
       try {
-        await navigateAndWait(workerTab.id, entry.url, 25000);
+        await navigateAndWait(workerTab.id, entry.url, 25000, requesterTabId);
         await chrome.scripting.executeScript({
           target: { tabId: workerTab.id },
           files: ["src/shared/alignment-engine.js", "src/content/extractor.js"]
         });
         // SPA 站点在 load 事件后才用 JS 渲染卡片:
         // 轮询等卡片数量稳定(连续两次相同且 ≥3),而不是固定等 600ms 就读
-        const rendered = await waitForCardsToRender(workerTab.id, 20000);
+        const rendered = await waitForCardsToRender(workerTab.id, 20000, requesterTabId);
+        if (cancelFlags.get(requesterTabId)) break;
         const [result] = await chrome.scripting.executeScript({
           target: { tabId: workerTab.id },
-          func: (ruleArg, pageArg) => globalThis.__cardSorter?.applyRule(ruleArg, { page: pageArg }),
-          args: [rule, entry.page]
+          func: (ruleArg, pageArg, limitsArg) => globalThis.__cardSorter?.applyRule(ruleArg, { page: pageArg, limits: limitsArg || undefined }),
+          args: [rule, entry.page, limits || null]
         });
         items = result?.result?.items || [];
         const [links] = await chrome.scripting.executeScript({
@@ -259,7 +260,7 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
         pageLinks = links?.result || null;
         if (!items.length && !rendered) {
           noCards = true;
-          error = "等了 20 秒页面上也没出现卡片(可能这一页不存在,或网站加载太慢)";
+          error = IS_ZH ? "等了 20 秒页面上也没出现卡片(可能这一页不存在,或网站加载太慢)" : "No cards appeared after 20 seconds (the page may not exist, or the site is loading slowly)";
         }
       } catch (crawlError) {
         error = crawlError?.message || String(crawlError);
@@ -286,12 +287,14 @@ async function startTabCrawl({ urls, rule }, requesterTabId) {
 }
 
 // 每 500ms 数一次页面上的卡片,连续两次数量相同且 ≥3 → 渲染稳定;最多等 timeoutMs。
+// 用户点了停止、或后台标签页已被关掉 → 马上结束,不再等满。
 // 返回最终卡片数(0 表示等到超时也没有卡片)。
-async function waitForCardsToRender(tabId, timeoutMs) {
+async function waitForCardsToRender(tabId, timeoutMs, requesterTabId) {
   const started = Date.now();
   let previous = -1;
   let count = 0;
   while (Date.now() - started < timeoutMs) {
+    if (cancelFlags.get(requesterTabId)) return count;
     try {
       const [result] = await chrome.scripting.executeScript({
         target: { tabId },
@@ -306,6 +309,7 @@ async function waitForCardsToRender(tabId, timeoutMs) {
       count = result?.result || 0;
     } catch {
       count = 0;
+      if (!(await tabExists(tabId))) return count;
     }
     if (count >= 3 && count === previous) return count;
     previous = count;
@@ -314,26 +318,36 @@ async function waitForCardsToRender(tabId, timeoutMs) {
   return count;
 }
 
-function navigateAndWait(tabId, url, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("页面加载超时"));
-    }, timeoutMs);
+async function tabExists(tabId) {
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-    function listener(updatedTabId, info) {
-      if (updatedTabId === tabId && info.status === "complete") {
-        clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url }).catch((error) => {
+// 等这一页加载完。空白页自己的"加载完"不算;标签页被关掉(用户点了停止)→ 马上结束
+function navigateAndWait(tabId, url, timeoutMs, requesterTabId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error(IS_ZH ? "页面加载超时" : "Page load timed out")), timeoutMs);
+
+    function finish(error) {
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(error);
-    });
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      if (error) reject(error);
+      else resolve();
+    }
+    function listener(updatedTabId, info, tab) {
+      if (updatedTabId === tabId && info.status === "complete" && !/^about:blank/i.test(tab?.url || "")) finish();
+    }
+    function onRemoved(removedTabId) {
+      if (removedTabId === tabId || removedTabId === requesterTabId) finish(new Error(IS_ZH ? "已停止" : "Stopped"));
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    chrome.tabs.update(tabId, { url }).catch((error) => finish(error));
   });
 }
 
