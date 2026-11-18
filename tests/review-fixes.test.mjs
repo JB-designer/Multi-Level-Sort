@@ -67,3 +67,13 @@ test("class names with @ # > inside cards still give each card its value", () =>
     assert.deepEqual(valuesOf(result, "number").slice(0, 3), [137, 274, 411], cls);
   }
 });
+
+test("page 2 of a path-style list finds the setup saved on page 1; old saves still load", async () => {
+  const { makeRuleKey, legacyRuleKey } = await import("../src/core/rules.js");
+  assert.equal(makeRuleKey("https://site.test/videos/page/2"), makeRuleKey("https://site.test/videos"));
+  assert.equal(makeRuleKey("https://site.test/videos/page-3"), makeRuleKey("https://site.test/videos"));
+  assert.equal(makeRuleKey("https://site.test/videos/p/4"), makeRuleKey("https://site.test/videos"));
+  assert.notEqual(makeRuleKey("https://site.test/videos"), makeRuleKey("https://site.test/channels"));
+  assert.equal(makeRuleKey("https://site.test/user/123"), "https://site.test/user/*");
+  assert.equal(legacyRuleKey("https://site.test/videos/page/2"), "https://site.test/videos/page/*");
+});

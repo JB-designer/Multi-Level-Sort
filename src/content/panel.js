@@ -92,7 +92,8 @@
     await loadCore();
     state.ruleKey = core.rules.makeRuleKey(location.href);
     // 同一个网址(只是页码不同)记住拖到的位置;新页面从默认的右上角开始
-    state.anchor = (await core.position.loadAnchor(state.ruleKey)) || core.position.defaultAnchor();
+    state.anchor = (await core.position.loadAnchor(state.ruleKey)) ||
+      (await core.position.loadAnchor(core.rules.legacyRuleKey(location.href))) || core.position.defaultAnchor();
     state.theme = await core.theme.load();
     buildPanel();
     renderThemeButton();
@@ -687,19 +688,43 @@
   }
 
   // 新收的页和已有某页内容雷同 → 翻页网址没生效,返回撞上的页码
+  // 置顶帖之类每页都有的卡片不参与比较:否则一页很短的最后一页(比如 5 张里 4 张是置顶)会被误认成重复页,
+  // 那张真正的新卡片就读不进来。"每页都有" = 已读的页里至少两页都出现过。
   function looksLikeExistingPage(items) {
     if (!items || !items.length) return null;
-    var identities = pageIdentities(items);
-    var titled = titledSignatures(items);
     var pages = Array.from(state.pagesData.keys());
+    var pinned = pinnedCards(pages);
+    var identities = withoutPinned(pageIdentities(items), pinned.identities);
+    var titled = withoutPinned(titledSignatures(items), pinned.titled);
     for (var i = 0; i < pages.length; i += 1) {
       var stored = state.pagesData.get(pages[i]);
-      if (core.pagination.pagesLookIdentical(identities, storedIdentities(stored)) ||
-          core.pagination.pagesLookIdentical(titled, titledSignatures(stored))) {
+      if (core.pagination.pagesLookIdentical(identities, withoutPinned(storedIdentities(stored), pinned.identities)) ||
+          core.pagination.pagesLookIdentical(titled, withoutPinned(titledSignatures(stored), pinned.titled))) {
         return pages[i];
       }
     }
     return null;
+  }
+
+  function pinnedCards(pages) {
+    var seenIds = {};
+    var seenTitled = {};
+    var pinned = { identities: {}, titled: {} };
+    pages.forEach(function (page) {
+      var stored = state.pagesData.get(page);
+      var ids = {};
+      var titled = {};
+      storedIdentities(stored).forEach(function (sig) { ids[sig] = true; });
+      titledSignatures(stored).forEach(function (sig) { titled[sig] = true; });
+      Object.keys(ids).forEach(function (sig) { if (seenIds[sig]) pinned.identities[sig] = true; seenIds[sig] = true; });
+      Object.keys(titled).forEach(function (sig) { if (seenTitled[sig]) pinned.titled[sig] = true; seenTitled[sig] = true; });
+    });
+    return pinned;
+  }
+
+  function withoutPinned(signatures, pinned) {
+    var rest = signatures.filter(function (sig) { return !pinned[sig]; });
+    return rest.length ? rest : signatures; // 整页都是置顶卡片:照原样比较
   }
 
   /* ---------------- 收集:指定页码 ---------------- */
@@ -1495,7 +1520,7 @@
   }
 
   async function forgetSite() {
-    await core.rules.deleteRule(state.ruleKey);
+    await core.rules.deleteRuleForUrl(location.href);
     state.rule = null;
     state.dirty = true;
     state.sortRules = [];

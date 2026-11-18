@@ -6,29 +6,54 @@
  *   - 忽略 query 与 hash(/search?q=cat 与 ?q=dog 同一规则)
  *   - 纯数字/分页形态的路径段 → "*"(/videos/page/2 与 /videos/page/3 同一规则)
  *   - 其余路径段原样保留(/videos 与 /channels 是两套规则)
+ *   - 网址末尾的页码(/page/2、/p/3、/page-2)去掉:第 1 页 /videos 和第 2 页 /videos/page/2 是同一个列表
+ *     (以前按带 "/page/*" 的写法保存过的设置,读取时仍能找到,见 legacyRuleKey)
  */
 
 const STORAGE_KEY = "cardSorterSiteRules";
 export const RULE_VERSION = 1;
 
 export function normalizePathSkeleton(pathname) {
-  const segments = String(pathname || "/")
+  return skeletonOf(pathname, true);
+}
+
+function skeletonOf(pathname, dropTrailingPage) {
+  const decodedSegments = String(pathname || "/")
     .split("/")
     .filter(Boolean)
-    .map((segment) => {
-      const decoded = safeDecode(segment).toLowerCase();
-      if (/^\d+$/.test(decoded)) return "*";
-      if (/^(?:page|p|paged)[-_]?\d+$/.test(decoded)) return "*";
-      if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(decoded)) return "*";
-      return decoded;
-    });
+    .map((segment) => safeDecode(segment).toLowerCase());
+  if (dropTrailingPage) {
+    // 末尾的 "page/2"、"p/3" 或 "page-2"、"page2" 是页码,不是另一个列表
+    for (;;) {
+      const last = decodedSegments[decodedSegments.length - 1];
+      const before = decodedSegments[decodedSegments.length - 2];
+      if (last != null && /^(?:page|p|paged)[-_]?\d+$/.test(last)) { decodedSegments.pop(); continue; }
+      if (last != null && /^\d+$/.test(last) && /^(?:page|p|paged)$/.test(before || "")) { decodedSegments.length -= 2; continue; }
+      break;
+    }
+  }
+  const segments = decodedSegments.map((decoded) => {
+    if (/^\d+$/.test(decoded)) return "*";
+    if (/^(?:page|p|paged)[-_]?\d+$/.test(decoded)) return "*";
+    if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(decoded)) return "*";
+    return decoded;
+  });
   return "/" + segments.join("/");
 }
 
 export function makeRuleKey(url) {
+  return keyOf(url, true);
+}
+
+// 以前(不去掉末尾页码时)的保存位置:旧设置还在那里,读取和删除时一起看
+export function legacyRuleKey(url) {
+  return keyOf(url, false);
+}
+
+function keyOf(url, dropTrailingPage) {
   try {
     const parsed = new URL(url);
-    return `${parsed.origin.toLowerCase()}${normalizePathSkeleton(parsed.pathname)}`;
+    return `${parsed.origin.toLowerCase()}${skeletonOf(parsed.pathname, dropTrailingPage)}`;
   } catch {
     return "";
   }
@@ -69,7 +94,7 @@ export async function getRuleForUrl(url) {
   const key = makeRuleKey(url);
   if (!key) return null;
   const rules = await readAllRules();
-  return rules[key] || null;
+  return rules[key] || rules[legacyRuleKey(url)] || null;
 }
 
 export async function saveRule(rule) {
@@ -86,6 +111,16 @@ export async function deleteRule(key) {
     delete rules[key];
     await writeAllRules(rules);
   }
+}
+
+// 「重置网站」:新旧两个保存位置都清掉
+export async function deleteRuleForUrl(url) {
+  const rules = await readAllRules();
+  let changed = false;
+  for (const key of new Set([makeRuleKey(url), legacyRuleKey(url)])) {
+    if (key && rules[key]) { delete rules[key]; changed = true; }
+  }
+  if (changed) await writeAllRules(rules);
 }
 
 async function readAllRules() {
