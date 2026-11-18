@@ -673,7 +673,11 @@
       byParent[key] = (byParent[key] || 0) + 1;
       if (byParent[key] >= MIN_CLUSTER_SIZE) lists.add(parent);
     }
-    return scored.filter(function (c) { return !lists.has(c.element); });
+    // 外框外面常常还包着几层(只装着这一个外框):这些外层同样会被当成"一张卡",一起去掉
+    var listEls = Array.from(lists);
+    return scored.filter(function (c) {
+      return !listEls.some(function (list) { return c.element === list || c.element.contains(list); });
+    });
   }
 
   // 有的网站把一张卡片拆成并排的两块:一块是图和标题,另一块是作者和数字。两块会各自被认成"卡片",
