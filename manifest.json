@@ -25,7 +25,6 @@
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "tabs",
     "scripting"
   ],
   "host_permissions": [
