@@ -40,7 +40,8 @@
     manyCards: null,        // 当前页卡片超过默认上限时的总张数(用户还没同意全部读取)
     allCards: false,        // 用户已同意「全部读取」
     tabBatch: null,          // 后台翻页批次的 promise 挂点
-    pageTemplates: [],       // 翻页网址模板候选(逐一验证)
+    pageTemplates: [],
+    followLinks: null,       // 逐个点链接翻页的网站:这一页上已经学到的各页链接       // 翻页网址模板候选(逐一验证)
     templateIndex: 0,
     pageDelayMs: 400,        // 两页之间的间隔;网站限速时自动放慢
     slowedDown: false,
@@ -66,12 +67,25 @@
 
   /* ================= 入口与初始化 ================= */
 
+  var opening = null; // 面板正在第一次打开(加载模块、读设置);这时再点图标不能再建一个面板
+
   async function toggle() {
+    if (opening) return opening;
     if (host) {
       host.style.display = host.style.display === "none" ? "" : "none";
       if (host.style.display === "") applyPosition();
+      else if (state.picking) stopPicking(); // 面板藏起来了,「点选数字」也要一起结束,不能继续拦住页面上的点击
       return;
     }
+    opening = openPanel();
+    try {
+      await opening;
+    } finally {
+      opening = null;
+    }
+  }
+
+  async function openPanel() {
     await loadCore();
     state.ruleKey = core.rules.makeRuleKey(location.href);
     // 同一个网址(只是页码不同)记住拖到的位置;新页面从默认的右上角开始
@@ -552,7 +566,16 @@
   }
 
   async function runSort() {
-    if (state.collecting) return;
+    if (state.collecting || runSort.busy) return;
+    runSort.busy = true; // 从点下去到真正开始读取之间还有一步保存;这时再点一次不能再开一轮
+    try {
+      return await runSortInner();
+    } finally {
+      runSort.busy = false;
+    }
+  }
+
+  async function runSortInner() {
     // 上次排序后没有任何改动 → 直接重开缓存的结果页,不重新收集
     if (state.lastResultId) {
       reopenResults();
@@ -617,7 +640,14 @@
     state.templateIndex = 0;
     // 学不出网址写法(网址里只有编码)时:不自己拼网址,点写着下一个数字的链接
     var follow = core.pagination.chooseFollowLinks(links, location.href, page);
-    if (follow) state.pageTemplates = [core.pagination.makeFollowLinksTemplate(follow)];
+    if (follow) {
+      var learned = state.followLinks && state.followLinks.page === page ? state.followLinks.known : null;
+      var template = core.pagination.makeFollowLinksTemplate(follow);
+      if (learned) learned.forEach(function (href, n) { if (!template.known.has(n)) template.known.set(n, href); });
+      state.pageTemplates = [template];
+      // 同一页上之前几次读取学到的页链接留着,重试跳过的页、把范围往后加时还能找到
+      state.followLinks = { page: page, known: template.known };
+    }
   }
 
   function urlFor(page) {
@@ -780,6 +810,8 @@
         continue;
       }
       rateAttempts = 0;
+      // 这种翻页写法已经成功读到过页,网站却说"没有这一页"(404/410)→ 列表到头了,不用再开后台标签页慢慢等
+      if (templateProven && tolerant && isMissingPage(outcome)) { endListAt(page, null); break; }
       if (outcome.error || isSuspicious(outcome)) {
         suspicious = true;
         break;
@@ -1000,18 +1032,35 @@
     return core.pagination.distinguishCollidingLinks(items.map(contentSignature), items.map(fullLink));
   }
 
+  var TAB_SILENCE_MS = 90000; // 后台读一页最多约 50 秒;这么久都没有消息 = 后台服务中断了
+
   function crawlViaTabs(entries) {
     return new Promise(function (resolve) {
       var got = {};
-      state.tabBatch = {
+      var watchdog = null;
+      function finish() {
+        clearTimeout(watchdog);
+        if (state.tabBatch === batch) state.tabBatch = null;
+        resolve(got);
+      }
+      function heard() {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(function () {
+          entries.forEach(function (entry) {
+            if (!got[entry.page]) got[entry.page] = { items: [], error: t("tabNoAnswer"), noCards: false, pageLinks: null };
+          });
+          finish();
+        }, TAB_SILENCE_MS);
+      }
+      var batch = {
         onPage: function (message) {
+          heard();
           got[message.page] = { items: message.items || [], error: message.error || "", noCards: Boolean(message.noCards), pageLinks: message.pageLinks || null };
         },
-        onDone: function () {
-          state.tabBatch = null;
-          resolve(got);
-        }
+        onDone: finish
       };
+      state.tabBatch = batch;
+      heard();
       chrome.runtime.sendMessage({ type: "card-sorter-crawl-tabs", urls: entries, rule: state.rule, limits: ALL_LIMITS });
     });
   }
@@ -2285,11 +2334,12 @@
 
   function handleAction(act, target) {
     if (act === "theme") switchTheme();
-    else if (act === "minimize") { ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
+    else if (act === "minimize") { if (state.picking) stopPicking(); ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
     else if (act === "redetect") { if (state.collecting) return; state.notes = []; state.pagesData.clear(); detectCurrentPage(); }
     else if (act === "scrollStop") cancelCollect();
     else if (act === "stopWaiting") stopWaiting();
     else if (act === "tab") {
+      if (state.collecting) return; // 读取中不能改读取方式,否则排出来的不是用户开始时要的范围
       var tab = target.getAttribute("data-tab");
       if (tab === state.readTab) return;
       state.readTab = tab;
@@ -2307,7 +2357,7 @@
       if (state.collecting) { cancelCollect(); return; }
       // 任何一步出错都必须发声,绝不静默
       runSort().catch(function (error) {
-        var message = (error && error.message) || String(error);
+        console.warn("[Multi-Level Sort] sort failed", error);
         if (state.collecting) endCollect("");
         addNote({ id: "error", tone: "warn", title: t("sortFailTitle"), body: t("tryAgain"), actions: [{ id: "dismiss", label: t("gotIt") }] });
       });
@@ -2321,6 +2371,7 @@
       if (actionId === "retry") {
         var action = (note.actions || []).find(function (a) { return a.id === "retry"; });
         retryPages(action && action.pages).catch(function (error) {
+          console.warn("[Multi-Level Sort] retry failed", error);
           addNote({ id: "error", tone: "warn", title: t("retryFailTitle"), body: t("tryAgain"), actions: [{ id: "dismiss", label: t("gotIt") }] });
         });
       }
@@ -2496,7 +2547,6 @@
       return;
     }
     if (!state.sortRules.length) resetDefaultSortRule();
-    refreshBands();
     if (ui.addRule) {
       ui.addRule.textContent = core.sort.firstUnusedField(catalog, state.sortRules)
         ? t("addRule")
@@ -2722,6 +2772,7 @@
   /* ---------------- 读取范围(F1–F4) ---------------- */
 
   function rangeAction(op, target) {
+    if (state.collecting) return; // 读取中不能改范围
     var pr = core.pageRange;
     var s = state.pageRange;
     if (op === "minus") s = pr.stepEnd(s, -1);
@@ -2731,7 +2782,11 @@
     else if (op === "this") s = pr.chooseThisPage(s);
     else if (op === "all") s = pr.chooseAll(s);
     else if (op === "fix") s = pr.resolveBefore(s, target.getAttribute("data-fix"));
-    else if (op === "editStart") { state.editingStart = !state.editingStart; renderRange(); return; }
+    else if (op === "editStart") {
+      if (!state.editingStart) { state.editingStart = true; renderRange(); return; }
+      state.editingStart = false;
+      s = pr.setStart(s, state.currentPage); // 「从这里开始」:起始页改成当前页
+    }
     state.pageRange = s;
     invalidateResultCache();
     renderRange();
@@ -2849,11 +2904,6 @@
     if (state.currentPage > 1 || state.editingStart || state.pageRange.start !== state.currentPage) {
       var other = el("div", "hint");
       var link = rangeButton("link", "editStart", state.editingStart ? t("startHere") : t("setStart"), false);
-      if (state.editingStart) {
-        link.addEventListener("click", function () {
-          state.pageRange = core.pageRange.setStart(state.pageRange, state.currentPage);
-        });
-      }
       other.appendChild(link);
       box.appendChild(other);
     }

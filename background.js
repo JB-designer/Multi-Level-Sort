@@ -103,7 +103,19 @@ async function updateResults(rid, payload) {
   const key = RESULT_PREFIX + rid;
   const stored = await RESULT_STORE.get(key);
   if (!stored?.[key]) return saveResults(payload);
-  await RESULT_STORE.set({ [key]: payload });
+  try {
+    await RESULT_STORE.set({ [key]: payload });
+  } catch (error) {
+    // 空间不够:和新存一份时一样,删掉别的旧结果再试;还不够就如实说结果太大
+    if (!isQuotaError(error)) throw error;
+    await pruneOldResults(0, key);
+    try {
+      await RESULT_STORE.set({ [key]: payload });
+    } catch (retryError) {
+      if (!isQuotaError(retryError)) throw retryError;
+      throw new Error(tooLargeMessage(payload));
+    }
+  }
   return rid;
 }
 
@@ -136,11 +148,11 @@ async function reopenResults(rid) {
   await chrome.tabs.create({ url: chrome.runtime.getURL("results.html") + "?rid=" + rid });
 }
 
-// 只留最近 keep 份结果(按 rid 里的时间先后),其余删除
-async function pruneOldResults(keep) {
+// 只留最近 keep 份结果(按 rid 里的时间先后),其余删除;exceptKey = 正在更新的那一份,不删
+async function pruneOldResults(keep, exceptKey) {
   try {
     const all = await RESULT_STORE.get(null);
-    const keys = Object.keys(all).filter((k) => k.startsWith(RESULT_PREFIX)).sort();
+    const keys = Object.keys(all).filter((k) => k.startsWith(RESULT_PREFIX) && k !== exceptKey).sort();
     if (keys.length <= keep) return;
     await RESULT_STORE.remove(keys.slice(0, keys.length - keep));
   } catch {

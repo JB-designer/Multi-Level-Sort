@@ -176,6 +176,7 @@ const ZH = {
   manyCardsTitle: (n) => `这一页有 ${n} 张卡片`,
   manyCardsBody: "全部读取会比较久，要继续吗？",
   readAll: "全部读取",
+  tabNoAnswer: "后台读取没有响应",
   cancel: "取消",
 
 
@@ -385,6 +386,7 @@ const EN = {
   manyCardsTitle: (n) => `This page has ${n} cards`,
   manyCardsBody: "Reading them all may take a while. Continue?",
   readAll: "Read all",
+  tabNoAnswer: "Background reading stopped responding",
   cancel: "Cancel",
 
 
