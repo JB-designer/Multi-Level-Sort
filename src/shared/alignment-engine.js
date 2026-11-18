@@ -397,9 +397,10 @@
 
   var CLASS_TOKEN_SKIP_RE = /^(?:js-|is-|has-|was-|active|hover|focus|selected|open|closed|show|hide|hidden|visible|loaded|loading|lazy|first|last|odd|even|left|right|top|bottom|clearfix|fade|in|out|on|off)$|\d{3,}|^-|^_$/i;
 
-  // forPath = 用在卡片内部的位置路径里:路径用 > : @ # ~ 当分隔符,含这些符号的 class
-  // (如 "@container"、"bg-[#fff]"、"[&>svg]:size-4")会把路径拆错,跳过它们
-  var PATH_UNSAFE_TOKEN_RE = /[@#>~\[\]]/;
+  // forPath = 用在卡片内部的位置路径里:路径用 > 分段、用 @ # 接属性名和标签名,含这些符号的 class
+  // (如 "@container"、"bg-[#fff]"、"[&>svg]:size-4")会把路径拆错,跳过它们。
+  // 只跳过真会拆错的符号,其余 class(如 "w-[72px]")照旧,以前保存的设置继续有效
+  var PATH_UNSAFE_TOKEN_RE = /[@#>]/;
 
   function classTokensOf(element, forPath) {
     var raw = element.getAttribute ? (element.getAttribute("class") || "") : "";
@@ -534,6 +535,8 @@
       // 卡片比上限多:只取了前 maxCards 张,调用方要告诉用户(不能悄悄少读)
       truncated: roots.length > maxCards,
       totalCards: roots.length,
+      // 只挑到 maxCards * 2 个候选就停了:真实张数可能更多,这时 totalCards 只是"至少"
+      totalExact: selected.length < maxCards * 2,
       signature: main.signature,
       clusterSizes: summarizeClusters(clusters)
     };
@@ -2450,6 +2453,7 @@
       cardCount: found.roots.length,
       truncated: Boolean(found.truncated),
       totalCards: found.totalCards || found.roots.length,
+      totalExact: found.totalExact !== false,
       signature: found.signature,
       clusterSizes: found.clusterSizes,
       candidates: candidates,
@@ -2498,6 +2502,7 @@
       cardCount: roots.length,
       truncated: Boolean(found.truncated),
       totalCards: found.truncated ? found.totalCards : roots.length,
+      totalExact: !found.truncated || found.totalExact !== false,
       signature: found.signature,
       items: items,
       fieldCoverage: fieldCoverage,

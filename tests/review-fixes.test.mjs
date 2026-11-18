@@ -58,3 +58,12 @@ test("a labelled clock duration ('Duration: 1:02:00') is read as a duration", ()
   const values = valuesOf(result, "duration");
   assert.deepEqual(values.slice(0, 4), [3720, 3540, 630, 605]);
 });
+
+test("class names with @ # > inside cards still give each card its value", () => {
+  for (const cls of ["@container meta", "bg-[#fff] meta", "[&>svg]:size-4 meta", "w-[72px] meta"]) {
+    const doc = listing((i) => `${(i + 1) * 137} views`, 15, "card", cls);
+    const result = engine.discover(doc, { pageUrl: doc.location.href });
+    assert.equal(result.ok, true, cls);
+    assert.deepEqual(valuesOf(result, "number").slice(0, 3), [137, 274, 411], cls);
+  }
+});

@@ -40,8 +40,8 @@
     manyCards: null,        // 当前页卡片超过默认上限时的总张数(用户还没同意全部读取)
     allCards: false,        // 用户已同意「全部读取」
     tabBatch: null,          // 后台翻页批次的 promise 挂点
-    pageTemplates: [],
-    followLinks: null,       // 逐个点链接翻页的网站:这一页上已经学到的各页链接       // 翻页网址模板候选(逐一验证)
+    pageTemplates: [],       // 翻页网址模板候选(逐一验证)
+    followLinks: null,       // 逐个点链接翻页的网站:这一页上已经学到的各页链接
     templateIndex: 0,
     pageDelayMs: 400,        // 两页之间的间隔;网站限速时自动放慢
     slowedDown: false,
@@ -73,7 +73,11 @@
     if (host) {
       host.style.display = host.style.display === "none" ? "" : "none";
       if (host.style.display === "") applyPosition();
-      else if (state.picking) stopPicking(); // 面板藏起来了,「点选数字」也要一起结束,不能继续拦住页面上的点击
+      else {
+        // 面板藏起来了:「点选数字」和弹窗也一起结束,不能留着拦住页面
+        if (state.picking) stopPicking();
+        dismissModal();
+      }
       return;
     }
     opening = openPanel();
@@ -180,7 +184,7 @@
       var applied = engine.applyRule(document, state.rule, { pageUrl: location.href, page: page, limits: currentPageLimits() });
       if (applied.ok && applied.healthy && !applied.signatureMismatch) {
         state.cardCount = applied.cardCount;
-        state.manyCards = applied.truncated ? applied.totalCards : null;
+        state.manyCards = manyCardsOf(applied);
         state.cardSignature = applied.signature || state.rule.cardSignature;
         state.rule.slots.forEach(function (slot) {
           if (slot.label || slot.siteLabel || slot.icon || slot.excluded) return;
@@ -212,7 +216,7 @@
       return;
     }
     state.cardCount = discovered.cardCount;
-    state.manyCards = discovered.truncated ? discovered.totalCards : null;
+    state.manyCards = manyCardsOf(discovered);
     state.cardSignature = discovered.signature;
     mergeCandidates(discovered.candidates);
     storePage(page, discovered.items);
@@ -639,12 +643,12 @@
     // 学不出网址写法(网址里只有编码)时:不自己拼网址,点写着下一个数字的链接
     var follow = core.pagination.chooseFollowLinks(links, location.href, page);
     if (follow) {
-      var learned = state.followLinks && state.followLinks.page === page ? state.followLinks.known : null;
+      var learned = state.followLinks && state.followLinks.page === page && state.followLinks.url === location.href ? state.followLinks.known : null;
       var template = core.pagination.makeFollowLinksTemplate(follow);
       if (learned) learned.forEach(function (href, n) { if (!template.known.has(n)) template.known.set(n, href); });
       state.pageTemplates = [template];
       // 同一页上之前几次读取学到的页链接留着,重试跳过的页、把范围往后加时还能找到
-      state.followLinks = { page: page, known: template.known };
+      state.followLinks = { page: page, url: location.href, known: template.known };
     }
   }
 
@@ -997,6 +1001,7 @@
           entries.forEach(function (entry) {
             if (!got[entry.page]) got[entry.page] = { items: [], error: t("tabNoAnswer"), noCards: false, pageLinks: null };
           });
+          chrome.runtime.sendMessage({ type: "card-sorter-crawl-cancel" }); // 后台若只是太慢,也让它停下,不和下一次读取混在一起
           finish();
         }, TAB_SILENCE_MS);
       }
@@ -1391,6 +1396,14 @@
     if (ui.modalOk) ui.modalOk.focus();
   }
 
+  // 关掉弹窗,当作点了「取消」
+  function dismissModal() {
+    if (!ui.modal || !ui.modal.open) return;
+    var act = modalChoice.cancel;
+    closeBottomModal();
+    if (act) act();
+  }
+
   function closeBottomModal() {
     modalChoice = {};
     var dialog = ui.modal;
@@ -1544,9 +1557,13 @@
       state.cardsLastPage = null;
     }
     state.cardCount = applied.cardCount;
-    state.manyCards = applied.truncated ? applied.totalCards : null;
+    state.manyCards = manyCardsOf(applied);
     storePage(state.currentPage, applied.items);
     return true;
+  }
+
+  function manyCardsOf(result) {
+    return result && result.truncated ? { n: result.totalCards, exact: result.totalExact !== false } : null;
   }
 
   function currentPageLimits() {
@@ -1562,9 +1579,9 @@
 
   // 当前页卡片超过默认上限:问用户要不要全部读取。取消 = 不读,切到「按卡片数」并让那里闪两下,
   // 让用户知道可以自己在那里改要读多少张
-  function askReadAll(total) {
+  function askReadAll(many) {
     openModal({
-      title: t("manyCardsTitle", total),
+      title: many.exact ? t("manyCardsTitle", many.n) : t("manyCardsTitleOver", many.n),
       body1: t("manyCardsBody"),
       okLabel: t("readAll"),
       cancelLabel: t("cancel"),
@@ -2251,7 +2268,7 @@
 
   function handleAction(act, target) {
     if (act === "theme") switchTheme();
-    else if (act === "minimize") { if (state.picking) stopPicking(); ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
+    else if (act === "minimize") { if (state.picking) stopPicking(); dismissModal(); ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
     else if (act === "redetect") { if (state.collecting) return; state.notes = []; state.pagesData.clear(); detectCurrentPage(); }
     else if (act === "scrollStop") cancelCollect();
     else if (act === "stopWaiting") stopWaiting();
@@ -2749,6 +2766,7 @@
       startInput.value = String(state.pageRange.start);
       startInput.setAttribute("aria-label", t("firstPage"));
       startInput.addEventListener("change", function () {
+        if (state.collecting) { renderRange(); return; }
         state.pageRange = core.pageRange.setStart(state.pageRange, startInput.value);
         invalidateResultCache();
         renderRange();
@@ -2887,6 +2905,7 @@
   }
 
   function cardsAction(op, target) {
+    if (state.collecting) return;
     var sr = core.scrollReader;
     if (op === "minus") setCardTarget(sr.stepTarget(state.cardTarget, -sr.CARD_TARGET_STEP));
     else if (op === "plus") setCardTarget(sr.stepTarget(state.cardTarget, sr.CARD_TARGET_STEP));
@@ -2894,6 +2913,7 @@
   }
 
   function setCardTarget(value) {
+    if (state.collecting) { renderRange(); return; }
     state.cardTarget = value;
     invalidateResultCache();
     renderRange();
@@ -2901,6 +2921,7 @@
   }
 
   function applyTypedEnd(text) {
+    if (state.collecting) { renderRange(); return; }
     state.pageRange = core.pageRange.typeEnd(state.pageRange, text);
     invalidateResultCache();
     renderRange();

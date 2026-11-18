@@ -352,7 +352,8 @@ function navigateAndWait(tabId, url, timeoutMs, requesterTabId) {
       else resolve();
     }
     function listener(updatedTabId, info, tab) {
-      if (updatedTabId === tabId && info.status === "complete" && !/^about:blank/i.test(tab?.url || "")) finish();
+      // 没有 tabs 权限时,只有网页(http/https)的"加载完"会带网址;空白页的不带 → 不算
+      if (updatedTabId === tabId && info.status === "complete" && /^https?:/i.test(tab?.url || "")) finish();
     }
     function onRemoved(removedTabId) {
       if (removedTabId === tabId || removedTabId === requesterTabId) finish(new Error(IS_ZH ? "已停止" : "Stopped"));
