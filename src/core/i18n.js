@@ -173,6 +173,10 @@ const ZH = {
   retryFailTitle: "⚠ 重试失败",
   tryAgain: "请重试。",
   gotIt: "知道了",
+  manyCardsTitle: (n) => `这一页有 ${n} 张卡片`,
+  manyCardsBody: "全部读取会比较久，要继续吗？",
+  readAll: "全部读取",
+  cancel: "取消",
 
 
   pickNumber: "点击卡片上要排序的数字",
@@ -378,6 +382,10 @@ const EN = {
   retryFailTitle: "⚠ Retry failed",
   tryAgain: "Try again.",
   gotIt: "Got it",
+  manyCardsTitle: (n) => `This page has ${n} cards`,
+  manyCardsBody: "Reading them all may take a while. Continue?",
+  readAll: "Read all",
+  cancel: "Cancel",
 
 
   pickNumber: "Click a number to sort by",

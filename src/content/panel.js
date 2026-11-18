@@ -37,6 +37,8 @@
     collecting: false,
     collectCancelled: false,
     collectProgress: "",
+    manyCards: null,        // 当前页卡片超过默认上限时的总张数(用户还没同意全部读取)
+    allCards: false,        // 用户已同意「全部读取」
     tabBatch: null,          // 后台翻页批次的 promise 挂点
     pageTemplates: [],       // 翻页网址模板候选(逐一验证)
     templateIndex: 0,
@@ -163,9 +165,10 @@
     setScope(t("scanning"));
 
     if (state.rule) {
-      var applied = engine.applyRule(document, state.rule, { pageUrl: location.href, page: page });
+      var applied = engine.applyRule(document, state.rule, { pageUrl: location.href, page: page, limits: currentPageLimits() });
       if (applied.ok && applied.healthy && !applied.signatureMismatch) {
         state.cardCount = applied.cardCount;
+        state.manyCards = applied.truncated ? applied.totalCards : null;
         state.cardSignature = applied.signature || state.rule.cardSignature;
         state.rule.slots.forEach(function (slot) {
           if (slot.label || slot.siteLabel || slot.icon || slot.excluded) return;
@@ -188,7 +191,7 @@
       addNote({ id: "redesign", tone: "warn", title: t("layoutTitle"), body: t("layoutBody"), actions: [{ id: "dismiss", label: t("gotIt") }] });
     }
 
-    var discovered = engine.discover(document, { pageUrl: location.href, page: page });
+    var discovered = engine.discover(document, { pageUrl: location.href, page: page, limits: currentPageLimits() });
     if (!discovered.ok) {
       state.cardCount = 0;
       state.candidates = [];
@@ -197,6 +200,7 @@
       return;
     }
     state.cardCount = discovered.cardCount;
+    state.manyCards = discovered.truncated ? discovered.totalCards : null;
     state.cardSignature = discovered.signature;
     mergeCandidates(discovered.candidates);
     storePage(page, discovered.items);
@@ -558,10 +562,15 @@
       addNote({ id: "nofield", tone: "warn", title: t("noFieldTitle"), body: t("noFieldBody"), actions: [{ id: "dismiss", label: t("gotIt") }] });
       return;
     }
+    var mode = rangeMode();
+    // 当前页卡片很多:先问用户要不要全部读取(读完会比较久)
+    if (mode !== "cards" && state.manyCards && !state.allCards) {
+      askReadAll(state.manyCards);
+      return;
+    }
     clearRunNotes();
     state.lastCollectNote = null;
     state.lastRequested = null;
-    var mode = rangeMode();
 
     if (mode === "pages") {
       var view = core.pageRange.describePageRange(state.pageRange);
@@ -931,7 +940,7 @@
       }
       var html = await response.text();
       var doc = new DOMParser().parseFromString(html, "text/html");
-      var result = engine.applyRule(doc, state.rule, { pageUrl: url, page: page });
+      var result = engine.applyRule(doc, state.rule, { pageUrl: url, page: page, limits: ALL_LIMITS });
       var base = doc.createElement("base");
       base.href = url;
       doc.head.appendChild(base); // 让 a.href 按那一页的网址补全
@@ -1003,7 +1012,7 @@
           resolve(got);
         }
       };
-      chrome.runtime.sendMessage({ type: "card-sorter-crawl-tabs", urls: entries, rule: state.rule });
+      chrome.runtime.sendMessage({ type: "card-sorter-crawl-tabs", urls: entries, rule: state.rule, limits: ALL_LIMITS });
     });
   }
 
@@ -1049,6 +1058,8 @@
    */
 
   var SCROLL_LIMITS = { maxCards: 2000, maxSeeds: 20000 };
+  // 一页卡片很多(超过默认的 400 张)时:用户同意「全部读取」后不再设上限;别的页一律读全,不悄悄少读
+  var ALL_LIMITS = { maxCards: 100000, maxSeeds: 200000 };
   var SCROLL_KEYS = { PageDown: 1, PageUp: 1, ArrowDown: 1, ArrowUp: 1, Home: 1, End: 1, " ": 1 };
 
   function cardKey(item) {
@@ -1389,12 +1400,23 @@
     return Boolean(sc && (sc.phase === "reading" || sc.phase === "paused" || sc.phase === "waiting"));
   }
 
+  var modalChoice = {}; // 弹窗两个按钮各自要做的事;只有一个「知道了」时为空
+
   function showBottomModal(n, target) {
+    openModal({ title: t("bottomModalTitle"), body1: t("bottomModalBody1", { n: n, target: target }), body2: t("bottomModalBody2") });
+  }
+
+  function openModal(opts) {
     var dialog = ui.modal;
     if (!dialog) return;
-    ui.modalTitle.textContent = t("bottomModalTitle");
-    ui.modalBody1.textContent = t("bottomModalBody1", { n: n, target: target });
-    ui.modalBody2.textContent = t("bottomModalBody2");
+    modalChoice = { ok: opts.onOk || null, cancel: opts.onCancel || null };
+    ui.modalTitle.textContent = opts.title;
+    ui.modalBody1.textContent = opts.body1 || "";
+    ui.modalBody2.textContent = opts.body2 || "";
+    ui.modalBody2.hidden = !opts.body2;
+    ui.modalOk.textContent = opts.okLabel || t("gotIt");
+    ui.modalCancel.textContent = opts.cancelLabel || "";
+    ui.modalCancel.hidden = !opts.cancelLabel;
     try {
       if (!dialog.open) dialog.showModal();
     } catch (e) {
@@ -1404,6 +1426,7 @@
   }
 
   function closeBottomModal() {
+    modalChoice = {};
     var dialog = ui.modal;
     if (dialog && dialog.open) {
       try { dialog.close(); } catch (e) { dialog.removeAttribute("open"); }
@@ -1542,16 +1565,68 @@
   // 其他已读的页作废,下次排序时重新读(否则那些卡片缺这个数字,排序会错)
   function rereadWithNewNumbers() {
     stopScrollSession();
-    var rule = {
+    rereadCurrentPage(rulesFromCandidates(), true);
+  }
+
+  // 按 rule 重读当前页;clearOthers = 别的已读页作废(下次排序时重新读)
+  function rereadCurrentPage(rule, clearOthers) {
+    var applied = engine.applyRule(document, rule, { pageUrl: location.href, page: state.currentPage, limits: state.noPaging ? SCROLL_LIMITS : currentPageLimits() });
+    if (!applied.ok) return false; // 这一页重读失败时保留原来读到的卡片,不让结果变空
+    if (clearOthers) {
+      state.pagesData.clear();
+      state.cardsLastPage = null;
+    }
+    state.cardCount = applied.cardCount;
+    state.manyCards = applied.truncated ? applied.totalCards : null;
+    storePage(state.currentPage, applied.items);
+    return true;
+  }
+
+  function currentPageLimits() {
+    return state.allCards ? ALL_LIMITS : undefined;
+  }
+
+  function rulesFromCandidates() {
+    return {
       cardSignature: state.cardSignature,
       slots: state.candidates.map(function (c) { return Object.assign({}, c, { enabled: !c.excluded && c.type !== "text" }); })
     };
-    var applied = engine.applyRule(document, rule, { pageUrl: location.href, page: state.currentPage, limits: state.noPaging ? SCROLL_LIMITS : undefined });
-    if (!applied.ok) return; // 这一页重读失败时保留原来读到的卡片,不让结果变空
-    state.pagesData.clear();
-    state.cardsLastPage = null;
-    state.cardCount = applied.cardCount;
-    storePage(state.currentPage, applied.items);
+  }
+
+  // 当前页卡片超过默认上限:问用户要不要全部读取。取消 = 不读,切到「按卡片数」并让那里闪两下,
+  // 让用户知道可以自己在那里改要读多少张
+  function askReadAll(total) {
+    openModal({
+      title: t("manyCardsTitle", total),
+      body1: t("manyCardsBody"),
+      okLabel: t("readAll"),
+      cancelLabel: t("cancel"),
+      onOk: function () {
+        state.allCards = true;
+        invalidateResultCache();
+        rereadCurrentPage(rulesFromCandidates(), false);
+        renderAll();
+        handleAction("sort");
+      },
+      onCancel: function () {
+        if (state.readTab !== "cards") {
+          state.readTab = "cards";
+          invalidateResultCache();
+          renderRange();
+          renderCta();
+        }
+        flashCardCount();
+      }
+    });
+  }
+
+  function flashCardCount() {
+    var target = ui.rangeBox && ui.rangeBox.querySelector(".step");
+    if (!target) return;
+    target.classList.remove("flash");
+    void target.offsetWidth; // 重新开始动画
+    target.classList.add("flash");
+    target.addEventListener("animationend", function () { target.classList.remove("flash"); }, { once: true });
   }
 
   // 用户点的是已经有的属性(比如又点了下载量)→ 用已有的那一个,不新建
@@ -1949,7 +2024,15 @@
     ".ma{display:flex;justify-content:flex-end;margin-top:12px}",
     ".mok{all:unset;background:var(--button);color:var(--onAccent);border-radius:8px;padding:7px 18px;font-weight:600;cursor:pointer}",
     ".mok:hover{background:var(--buttonHover)}",
-    ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}"
+    ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}",
+    ".ma{gap:8px}",
+    ".mno{all:unset;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 16px;font-weight:600;cursor:pointer}",
+    ".mno:hover{background:var(--subtle)}",
+    ".mno:focus-visible{outline:2px solid var(--focus);outline-offset:2px}",
+    ".mno[hidden],.mb[hidden]{display:none}",
+    ".flash{animation:flash-twice .9s ease-in-out 2}",
+    "@keyframes flash-twice{0%,100%{box-shadow:0 0 0 3px transparent}50%{box-shadow:0 0 0 4px var(--accentSoft)}}",
+    "@media (prefers-reduced-motion:reduce){.flash{animation:none;box-shadow:0 0 0 3px var(--accentSoft)}}"
   ].join("\n");
 
   // 图标:标题栏和收起胶囊用产品图标(与 icons/icon-panel.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
@@ -2072,8 +2155,11 @@
       '<div class="mh2" data-el="modalTitle"></div>' +
       '<p class="mb" data-el="modalBody1"></p>' +
       '<p class="mb" data-el="modalBody2"></p>' +
-      '<div class="ma"><button class="mok" data-el="modalOk">' + esc(t("gotIt")) + '</button></div>';
-    modal.querySelector(".mok").addEventListener("click", function () { closeBottomModal(); });
+      '<div class="ma"><button class="mno" data-el="modalCancel" hidden></button><button class="mok" data-el="modalOk">' + esc(t("gotIt")) + '</button></div>';
+    modal.querySelector(".mok").addEventListener("click", function () { var act = modalChoice.ok; closeBottomModal(); if (act) act(); });
+    modal.querySelector(".mno").addEventListener("click", function () { var act = modalChoice.cancel; closeBottomModal(); if (act) act(); });
+    // 按 Esc 关掉弹窗 = 取消
+    modal.addEventListener("cancel", function () { var act = modalChoice.cancel; modalChoice = {}; if (act) setTimeout(act, 0); });
     shadow.appendChild(modal);
     modal.querySelectorAll("[data-el]").forEach(function (node) { ui[node.getAttribute("data-el")] = node; });
     ui.modal = modal;

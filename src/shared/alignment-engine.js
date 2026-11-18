@@ -531,6 +531,9 @@
     roots.sort(compareDomOrder);
     return {
       roots: roots.slice(0, maxCards),
+      // 卡片比上限多:只取了前 maxCards 张,调用方要告诉用户(不能悄悄少读)
+      truncated: roots.length > maxCards,
+      totalCards: roots.length,
       signature: main.signature,
       clusterSizes: summarizeClusters(clusters)
     };
@@ -2468,7 +2471,7 @@
   // 发现模式:找 card → 对齐 → 候选字段 + 全量提取(含所有候选,便于 UI 展示示例)
   function discover(doc, options) {
     var opts = options || {};
-    var found = findCards(doc);
+    var found = findCards(doc, opts.limits);
     if (!found.roots.length) {
       return { ok: false, reason: "no-cards", cardCount: 0, candidates: [], items: [], signature: "", clusterSizes: found.clusterSizes };
     }
@@ -2485,6 +2488,8 @@
       ok: true,
       engineVersion: ENGINE_VERSION,
       cardCount: found.roots.length,
+      truncated: Boolean(found.truncated),
+      totalCards: found.totalCards || found.roots.length,
       signature: found.signature,
       clusterSizes: found.clusterSizes,
       candidates: candidates,
@@ -2531,6 +2536,8 @@
       ok: true,
       engineVersion: ENGINE_VERSION,
       cardCount: roots.length,
+      truncated: Boolean(found.truncated),
+      totalCards: found.truncated ? found.totalCards : roots.length,
       signature: found.signature,
       items: items,
       fieldCoverage: fieldCoverage,
