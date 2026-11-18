@@ -197,29 +197,6 @@ export function classifyCollectedPage({ items, error, noCards = false, duplicate
 // 连续这么多页都打开出错 → 不再一页页重试,按"列表大概到头了"停下
 export const MAX_CONSECUTIVE_FAILED_PAGES = 2;
 
-// 收集结束后的一句话说明。endedAfter = 列表最后一页的页码(没到头为 null);
-// skipped = 打开出错被跳过的页码。
-export function describeCollectOutcome({ requested = [], stored = [], endedAfter = null, skipped = [], duplicateOf = null, gaveUpAt = null, noLinkAfter = null } = {}) {
-  const parts = [];
-  const storedCount = stored.length;
-  if (noLinkAfter != null) {
-    parts.push(`第 ${noLinkAfter} 页上没有第 ${noLinkAfter + 1} 页的链接,读到这里为止,已排序读到的 ${storedCount} 页。`);
-  } else if (gaveUpAt != null) {
-    parts.push(`从第 ${gaveUpAt} 页起连续打不开,后面的页没有再读(可能列表在第 ${gaveUpAt - 1} 页就结束了),已排序读到的 ${storedCount} 页。`);
-  } else if (endedAfter != null) {
-    const reason = duplicateOf != null
-      ? `第 ${endedAfter + 1} 页拿到的是第 ${duplicateOf} 页的内容`
-      : `第 ${endedAfter + 1} 页没有卡片`;
-    parts.push(`列表在第 ${endedAfter} 页结束(${reason}),已排序读到的 ${storedCount} 页。`);
-  } else {
-    parts.push(`收齐了 ✓ 读了 ${storedCount} 页。`);
-  }
-  if (skipped.length) {
-    parts.push(`第 ${skipped.join("、")} 页打开出错,已跳过,其余照常排序;想补上就再点一次下面的排序按钮重试。`);
-  }
-  return parts.join(" ");
-}
-
 // 网站限速时怎么放慢(纯函数):429 / 503 → 等一会儿再读同一页(最多 3 次),之后每页之间多等一些。
 // retryAfter = 网站给的 Retry-After(秒数或日期);最多等 60 秒;页间隔最长 10 秒。
 export const MAX_RATE_RETRIES = 3;

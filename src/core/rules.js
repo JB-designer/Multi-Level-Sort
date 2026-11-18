@@ -88,11 +88,6 @@ export async function deleteRule(key) {
   }
 }
 
-export async function listRules() {
-  const rules = await readAllRules();
-  return Object.values(rules).sort((left, right) => right.updatedAt - left.updatedAt);
-}
-
 async function readAllRules() {
   const storage = globalThis.chrome?.storage?.local;
   if (!storage) return {};

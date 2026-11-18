@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chooseFollowLinks, makeFollowLinksTemplate, describeCollectOutcome } from "../src/core/pagination.js";
+import { chooseFollowLinks, makeFollowLinksTemplate } from "../src/core/pagination.js";
 
 const base = "https://stays.example/s/lake/homes?adults=2&nights=3";
 const cursor = (n) => base + "&cursor=" + Buffer.from(JSON.stringify({ offset: 18 * (n - 1) })).toString("base64");
@@ -40,9 +40,4 @@ test("the template learns the next links from each page it reads, and says when 
   assert.equal(template.make(5), cursor(5));
   template.learn(row([1, 2]), base, 6); // 第 6 页上没有 7 → 不收
   assert.equal(template.has(7), false);
-});
-
-test("stopping because the next page link is missing is said plainly", () => {
-  const text = describeCollectOutcome({ requested: [1, 2, 3, 4, 5], stored: [1, 2, 3], noLinkAfter: 3 });
-  assert.match(text, /第 3 页上没有第 4 页的链接/);
 });

@@ -41,7 +41,7 @@ Selecting a page range sets what the extension attempts to read. A website’s s
 
 ### Chrome Web Store
 
-To be added.
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/apjnpmlplniekeacofpapeefcnaaeana).
 
 ### Install from source
 

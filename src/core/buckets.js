@@ -80,16 +80,6 @@ export function getBand(value, bucketField) {
   return (bucketField.bands || []).find((band) => band.index === rank - 1) || null;
 }
 
-export function formatBucketSummary(bucketField) {
-  if (!bucketField?.bands?.length) return "";
-  return bucketField.bands.map((band) => band.label).join(" · ");
-}
-
-export function formatBucketValue(value, bucketField) {
-  const band = getBand(value, bucketField);
-  return band ? band.label : "";
-}
-
 function collectNumericValues(items, fieldId) {
   const values = [];
   for (const item of items) {

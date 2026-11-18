@@ -62,7 +62,6 @@
     anchor: null             // 面板/胶囊的位置(src/core/panel-position.js),拖动松手时保存
   };
 
-  var PAGE_CAP = 100; // 一次最多读 100 页
   var SORT_PRIORITY = ["downloads", "favorites", "likes", "views", "heat", "comments", "endorsements", "score", "dislikes", "fileSize", "price"];
 
   /* ================= 入口与初始化 ================= */
@@ -110,7 +109,6 @@
       pageRange: await import(url("src/core/page-range.js")),
       pageLinks: await import(url("src/core/page-links.js")),
       resultView: await import(url("src/core/result-view.js")),
-      generic: await import(url("src/core/generic-adapter.js")),
       scrollReader: await import(url("src/core/scroll-reader.js")),
       i18n: await import(url("src/core/i18n.js")),
       position: await import(url("src/core/panel-position.js")),
@@ -666,15 +664,6 @@
     if (template && template.follow && anchors) template.learn(core.pageLinks.selectPageLinks(anchors, location.href, page), location.href, page);
   }
 
-  // 第 1 页的规范网址(用户可能正停在第 N 页,二分探测必须从第 1 页起算)
-  function pageOneUrl() {
-    try {
-      return urlFor(1);
-    } catch (e) {
-      return location.href;
-    }
-  }
-
   function advanceTemplate() {
     if (state.templateIndex + 1 < state.pageTemplates.length) {
       state.templateIndex += 1;
@@ -709,10 +698,6 @@
     return null;
   }
 
-  function paginationFailedText(page, dupPage) {
-    return t("cantTurnPages", { tries: state.pageTemplates.length, page: page, dup: dupPage });
-  }
-
   /* ---------------- 收集:指定页码 ---------------- */
 
   // 页码模式:列表比要读的页数短时不算错 —— 读到头就停、用已读的页排序;
@@ -720,9 +705,9 @@
   async function collectPages(pageNumbers, range, stopWhen) {
     beginCollect();
     prepareTemplates();
-    var result = await collectPagesInner(pageNumbers, { tolerant: true, range: range, stopWhen: stopWhen || null });
+    var result = await collectPagesInner(pageNumbers, { range: range, stopWhen: stopWhen || null });
     state.lastCollectNote = result.note || null;
-    endCollect(result.message);
+    endCollect();
     // 什么都没读到:用不会自动消失的提示写明(跳过、到头等说明在排好之后一起显示,见 addRunNotes)
     if (!result.ok && !state.collectCancelled) {
       addNote({ id: "error", tone: "warn", title: t("noCardsReadTitle"), body: result.message, actions: [{ id: "dismiss", label: t("gotIt") }] });
@@ -730,11 +715,9 @@
     return result.ok;
   }
 
-  // 内核:收集指定页码(不管理 begin/end,供页码模式与日期模式共用)。返回 { ok, message, note }。
-  // opts.tolerant(只有页码模式用):列表到头 → 停下但不算失败;出错的页 → 跳过并记下。
-  // 日期模式不传 tolerant,行为和以前一样(任何一页收不到就停下报错)。
+  // 内核:收集指定页码(不管理 begin/end)。返回 { ok, message, note }。
+  // 列表到头 → 停下但不算失败;出错的页 → 跳过并记下。
   async function collectPagesInner(pageNumbers, opts) {
-    var tolerant = Boolean(opts && opts.tolerant);
     var range = (opts && opts.range) || null;
     var remaining = pageNumbers.slice();
     var suspicious = false;
@@ -753,17 +736,6 @@
       var stored = Array.from(state.pagesData.keys()).filter(function (n) {
         return range ? n >= range.from && n <= range.to : pageNumbers.indexOf(n) >= 0;
       }).sort(function (a, b) { return a - b; });
-      var message = core.pagination.describeCollectOutcome({
-        requested: pageNumbers,
-        stored: stored,
-        endedAfter: note.endedAfter,
-        duplicateOf: note.duplicateOf,
-        skipped: note.skipped,
-        gaveUpAt: note.gaveUpAt,
-        noLinkAfter: note.noLinkAfter
-      });
-      var lowNote = lowCountText(stored);
-      if (lowNote && note.endedAfter == null && note.noLinkAfter == null) message += " " + lowNote;
       if (!stored.length) {
         return {
           ok: false,
@@ -771,7 +743,7 @@
           message: t("noCardsReadBody", note.endedAfter)
         };
       }
-      return { ok: true, message: message, note: note };
+      return { ok: true, note: note };
     }
 
     // 列表到头:剩下的页都不用再读了
@@ -811,7 +783,7 @@
       }
       rateAttempts = 0;
       // 这种翻页写法已经成功读到过页,网站却说"没有这一页"(404/410)→ 列表到头了,不用再开后台标签页慢慢等
-      if (templateProven && tolerant && isMissingPage(outcome)) { endListAt(page, null); break; }
+      if (templateProven && isMissingPage(outcome)) { endListAt(page, null); break; }
       if (outcome.error || isSuspicious(outcome)) {
         suspicious = true;
         break;
@@ -827,8 +799,8 @@
           await sleep(300);
           continue; // 换模板重收同一页
         }
-        if (tolerant) { endListAt(page, dupPage); break; }
-        return { ok: false, message: paginationFailedText(page, dupPage) };
+        endListAt(page, dupPage);
+        break;
       }
       storePage(page, outcome.items);
       learnPageLinks(outcome.pageLinks, page);
@@ -868,12 +840,6 @@
         if (state.collectCancelled) break;
         var tabDup = tabItems.length ? looksLikeExistingPage(tabItems) : null;
         var verdict = core.pagination.classifyCollectedPage({ items: tabItems, error: tabError, noCards: tabNoCards, duplicateOf: tabDup, page: tabPage });
-        if (!tolerant && (verdict === "end" || verdict === "skip")) {
-          return {
-            ok: false,
-            message: t("pageNoCardsAfterRetry", tabPage)
-          };
-        }
         if (verdict === "end") { endListAt(tabPage, null); break; }
         if (verdict === "skip") {
           note.skipped.push(tabPage);
@@ -891,8 +857,8 @@
             setCollectProgress(t("dupRetry", { page: tabPage, dup: tabDup }));
             continue;
           }
-          if (tolerant) { endListAt(tabPage, tabDup); break; }
-          return { ok: false, message: paginationFailedText(tabPage, tabDup) };
+          endListAt(tabPage, tabDup);
+          break;
         }
         consecutiveFails = 0;
         storePage(tabPage, tabItems);
@@ -906,25 +872,7 @@
 
     var cancelled = state.collectCancelled;
     if (cancelled) return { ok: false, message: t("stoppedKept"), note: note };
-    if (tolerant) return finishTolerant();
-    return { ok: true, message: collectSummaryText(pageNumbers) };
-  }
-
-  function lowCountText(pageNumbers) {
-    var counts = pageNumbers.map(function (n) {
-      return { page: n, count: (state.pagesData.get(n) || []).length };
-    });
-    var max = 0;
-    counts.forEach(function (c) { if (c.count > max) max = c.count; });
-    var low = counts.filter(function (c) { return max >= 5 && c.count < max * 0.5; });
-    if (!low.length) return "";
-    return t("lowCount", { parts: low, max: max });
-  }
-
-  // 收齐后的诚实校验:某页数量和其他页差太多 → 明说,不静默
-  function collectSummaryText(pageNumbers) {
-    var low = lowCountText(pageNumbers);
-    return low || t("allRead");
+    return finishTolerant();
   }
 
   /* ---------------- 收集底层 ---------------- */
@@ -1065,37 +1013,6 @@
     });
   }
 
-  function pageUrlTemplate() {
-    var anchors = document.querySelectorAll("a[href]");
-    for (var i = 0; i < anchors.length; i += 1) {
-      var text = (anchors[i].textContent || "").trim();
-      if (!/^\d{1,5}$/.test(text)) continue;
-      var pageNumber = Number(text);
-      var href = anchors[i].getAttribute("href") || "";
-      if (!href || href.charAt(0) === "#") continue;
-      try {
-        var absolute = new URL(href, location.href);
-        var keys = Array.from(absolute.searchParams.keys());
-        for (var k = 0; k < keys.length; k += 1) {
-          if (absolute.searchParams.get(keys[k]) === String(pageNumber) && /page|^p$|paged/i.test(keys[k])) {
-            var paramKey = keys[k];
-            var base = absolute.href;
-            return function (n) {
-              var next = new URL(base);
-              next.searchParams.set(paramKey, String(n));
-              return next.href;
-            };
-          }
-        }
-      } catch (e) { /* ignore */ }
-    }
-    return function (n) {
-      var next = new URL(location.href);
-      next.searchParams.set("page", String(n));
-      return next.href;
-    };
-  }
-
   /* ================= 按卡片数读取 ================= */
   /*
    * 两种情况:
@@ -1119,7 +1036,7 @@
   async function collectPagesForCards() {
     var target = state.cardTarget;
     var from = state.currentPage;
-    var last = from + PAGE_CAP - 1;
+    var last = from + core.pageRange.MAX_PAGES_PER_RUN - 1; // 一次最多读 100 页(和按页数读取同一个上限)
     if (state.totalPages) last = Math.min(last, Math.max(from, state.totalPages));
     function counted() {
       var seen = {};
@@ -1586,6 +1503,7 @@
     ui.panel.scrollTop = 0;
     renderRules();
     picker.start({
+      texts: { tip: t("pickTip"), text: t("pickText"), outside: t("pickOutside"), noNumber: t("pickNoNumber"), missed: t("pickMissed") },
       onPicked: function (result) {
         state.picking = false;
         invalidateResultCache();
@@ -1826,7 +1744,6 @@
   }
 
   function addRunNotes(stats, count) {
-    var pagesText = core.resultView.describePageList(stats.pages);
     var requested = stats.requested;
     var pageCount = stats.pages.length;
     if (stats.skippedPages && stats.skippedPages.length) {
@@ -2358,7 +2275,7 @@
       // 任何一步出错都必须发声,绝不静默
       runSort().catch(function (error) {
         console.warn("[Multi-Level Sort] sort failed", error);
-        if (state.collecting) endCollect("");
+        if (state.collecting) endCollect();
         addNote({ id: "error", tone: "warn", title: t("sortFailTitle"), body: t("tryAgain"), actions: [{ id: "dismiss", label: t("gotIt") }] });
       });
     }

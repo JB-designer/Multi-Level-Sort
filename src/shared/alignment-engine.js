@@ -765,7 +765,6 @@
         collectAttrSlots(element, frame.path, slots);
       }
 
-      var child = element.lastElementChild;
       var childIndexes = {};
       var ordered = [];
       var forward = element.firstElementChild;
@@ -784,7 +783,6 @@
         }
         stack.push({ node: ordered[i].node, path: joinPath(frame.path, ordered[i].seg) });
       }
-      void child;
     }
     return slots;
   }
@@ -2047,8 +2045,7 @@
         discoveryOrder: i,
         rawText: normalizeText(card.textContent).slice(0, 400),
         metrics: metrics,
-        metricRaw: metricRaw,
-        _dbg: identity.dbg
+        metricRaw: metricRaw
       });
     }
     return items;
@@ -2192,7 +2189,6 @@
 
   function extractIdentity(card, pageUrl) {
     var cfg = identityRules();
-    if (!cfg.link) return extractIdentityOld(card, pageUrl);
     var title = "";
     var url = "";
     var headings = strongTitles(card);
@@ -2316,42 +2312,6 @@
       if (hidden) return true;
     }
     return false;
-  }
-
-  function extractIdentityOld(card, pageUrl) {
-    var title = "";
-    var url = "";
-    var thumbnail = "";
-
-    var titleEl = card.querySelector("h1,h2,h3,h4,h5,[class*='title' i],[class*='name' i],[itemprop='name']");
-    if (titleEl) title = normalizeText(titleEl.textContent);
-
-    var anchors = card.querySelectorAll("a[href]");
-    var ownLink = ownCardLink(card);
-    var bestAnchor = ownLink;
-    var bestScore = -1;
-    for (var i = 0; i < anchors.length && !ownLink; i += 1) {
-      var href = anchors[i].getAttribute("href") || "";
-      if (!href || href.charAt(0) === "#" || /^javascript:/i.test(href)) continue;
-      var text = normalizeText(anchors[i].textContent || anchors[i].getAttribute("title") || "");
-      var score = 0;
-      if (anchors[i].querySelector("img,picture,video")) score += 2;
-      if (text.length >= 6 && text.length <= 240) score += 3;
-      if (titleEl && (anchors[i].contains(titleEl) || titleEl.contains(anchors[i]))) score += 4;
-      if (score > bestScore) { bestScore = score; bestAnchor = anchors[i]; }
-    }
-    if (bestAnchor) {
-      url = absoluteUrl(bestAnchor.getAttribute("href"), pageUrl);
-      if (!title) title = normalizeText(bestAnchor.textContent || bestAnchor.getAttribute("title") || "");
-    }
-    if (!title) {
-      var img = card.querySelector("img[alt]");
-      if (img) title = normalizeText(img.getAttribute("alt"));
-    }
-    if (!title) title = normalizeText(card.textContent).slice(0, 80);
-
-    thumbnail = pickThumbnail(card, pageUrl);
-    return { title: title, url: url, thumbnail: thumbnail };
   }
 
   // 懒加载图片在没滚到、或后台读取(不跑网站脚本)时,src 只是一张共用的占位图,
