@@ -635,10 +635,24 @@
     return roots.slice(0, (limits && limits.maxCards) || MAX_CARDS);
   }
 
+  // 按得分从高到低挑互不包含的候选。scored 已按得分排好,先挑中的得分不会更低,
+  // 所以只需判断"是否和已挑中的重叠":自己或某个上层已被挑中,或自己是某个已挑中元素的上层。
+  // 用两个集合往上查,不再拿每个候选和所有已挑中的一一比较(卡片多时很慢)。
   function selectNonOverlapping(scored, maxCards) {
     var selected = [];
+    var chosen = new Set();
+    var chosenAncestors = new Set();
     for (var s = 0; s < scored.length && selected.length < maxCards * 2; s += 1) {
-      insertNonOverlapping(selected, scored[s]);
+      var element = scored[s].element;
+      if (chosenAncestors.has(element)) continue;
+      var overlaps = false;
+      for (var node = element; node; node = node.parentElement) {
+        if (chosen.has(node)) { overlaps = true; break; }
+      }
+      if (overlaps) continue;
+      selected.push(scored[s]);
+      chosen.add(element);
+      for (var up = element.parentElement; up && !chosenAncestors.has(up); up = up.parentElement) chosenAncestors.add(up);
     }
     return selected;
   }
@@ -657,20 +671,6 @@
       if (byParent[key] >= MIN_CLUSTER_SIZE) lists.add(parent);
     }
     return scored.filter(function (c) { return !lists.has(c.element); });
-  }
-
-  function insertNonOverlapping(selected, candidate) {
-    for (var i = 0; i < selected.length; i += 1) {
-      var chosen = selected[i];
-      var overlaps = chosen.element === candidate.element ||
-        (chosen.element.contains && chosen.element.contains(candidate.element)) ||
-        (candidate.element.contains && candidate.element.contains(chosen.element));
-      if (overlaps) {
-        if (candidate.score > chosen.score) selected[i] = candidate;
-        return;
-      }
-    }
-    selected.push(candidate);
   }
 
   // 有的网站把一张卡片拆成并排的两块:一块是图和标题,另一块是作者和数字。两块会各自被认成"卡片",
