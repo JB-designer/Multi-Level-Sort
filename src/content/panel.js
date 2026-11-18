@@ -340,21 +340,24 @@
     state.pagesData.set(page, stamped);
   }
 
-  function pool() {
+  // bounds = { startPage, endPage }:只取这几页。先按页数范围取,再合并重复,
+  // 否则范围外的那一份会把范围内的同一张卡片"合并"掉,结果里就少了这张卡片
+  function pool(bounds) {
     var all = [];
     var pages = Array.from(state.pagesData.keys()).sort(function (a, b) { return a - b; });
     pages.forEach(function (page) {
+      if (bounds && (page < bounds.startPage || page > bounds.endPage)) return;
       state.pagesData.get(page).forEach(function (item) { all.push(item); });
     });
     return all;
   }
 
   // 展示池:同链接同标题的完全重复只留第一张(跨页置顶/推荐位造成),合并数记账
-  function displayPool() {
+  function displayPool(bounds) {
     var seen = {};
     var merged = [];
     var duplicates = 0;
-    pool().forEach(function (item) {
+    pool(bounds).forEach(function (item) {
       var key = cardKey(item);
       if (seen[key]) { duplicates += 1; return; }
       seen[key] = true;
@@ -471,27 +474,36 @@
     return view.thisOn ? "current" : "pages";
   }
 
-  function rangeConfig() {
+  // 这次排序包括的页
+  function pageBounds() {
     var mode = rangeMode();
     var range = state.pageRange;
+    return {
+      startPage: mode === "current" || mode === "cards" ? state.currentPage : range.start,
+      endPage: mode === "current" ? state.currentPage
+        : mode === "cards" ? (state.noPaging ? state.currentPage : (state.cardsLastPage || state.currentPage))
+        : range.end
+    };
+  }
+
+  function rangeConfig() {
+    var bounds = pageBounds();
     return {
       sourceUrl: location.href,
       scopeFilters: { date: false, page: true, all: false },
       startDate: "",
       endDate: "",
-      startPage: mode === "current" || mode === "cards" ? state.currentPage : range.start,
-      endPage: mode === "current" ? state.currentPage
-        : mode === "cards" ? (state.noPaging ? state.currentPage : (state.cardsLastPage || state.currentPage))
-        : range.end,
+      startPage: bounds.startPage,
+      endPage: bounds.endPage,
       fieldCatalog: fieldCatalog(),
       poolSize: pool().length
     };
   }
 
-  // 分档根据所有已读的卡片计算,每读一页、每次排序都重算
+  // 分档根据这次范围内已读的卡片计算,每读一页、每次排序都重算
   function refreshBands(config) {
     var cfg = config || rangeConfig();
-    var scoped = core.sort.applyFiltersAndSort(displayPool(), [], cfg);
+    var scoped = core.sort.applyFiltersAndSort(displayPool(cfg), [], cfg);
     state.bucketState = core.buckets.buildBucketState(scoped, cfg.fieldCatalog, cfg);
     return cfg;
   }
@@ -499,7 +511,7 @@
   function sortedItems() {
     var cfg = refreshBands();
     cfg.bucketState = state.bucketState;
-    return core.sort.applyFiltersAndSort(displayPool(), state.sortRules, cfg);
+    return core.sort.applyFiltersAndSort(displayPool(cfg), state.sortRules, cfg);
   }
 
   /* ================= 主流程:排序(先收齐,再排,再展示) ================= */
@@ -1487,6 +1499,7 @@
     state.sortRules = [];
     state.notes = [];
     addNote({ id: "forgot", tone: "info", title: t("resetTitle"), body: t("resetBody"), actions: [{ id: "dismiss", label: t("gotIt") }] });
+    state.pagesData.clear(); // 以前读的页按旧的设置读,作废
     detectCurrentPage();
   }
 
@@ -1512,6 +1525,7 @@
           else { state.candidates.unshift(Object.assign({}, candidate, { enabled: true })); if (!firstId) firstId = candidate.id; }
         });
         state.dirty = true;
+        rereadWithNewNumbers();
         if (firstId && forRule === NEW_RULE) addPickedRule(firstId);
         else if (firstId && forRule >= 0 && state.sortRules[forRule]) chooseField(forRule, firstId);
         else if (firstId && !state.sortRules.length) resetDefaultSortRule();
@@ -1522,6 +1536,22 @@
         renderPickBar();
       }
     });
+  }
+
+  // 已读的卡片只带着读取时认识的数字。手动加了数字后:这一页马上按新的数字重读,
+  // 其他已读的页作废,下次排序时重新读(否则那些卡片缺这个数字,排序会错)
+  function rereadWithNewNumbers() {
+    stopScrollSession();
+    var rule = {
+      cardSignature: state.cardSignature,
+      slots: state.candidates.map(function (c) { return Object.assign({}, c, { enabled: !c.excluded && c.type !== "text" }); })
+    };
+    var applied = engine.applyRule(document, rule, { pageUrl: location.href, page: state.currentPage, limits: state.noPaging ? SCROLL_LIMITS : undefined });
+    if (!applied.ok) return; // 这一页重读失败时保留原来读到的卡片,不让结果变空
+    state.pagesData.clear();
+    state.cardsLastPage = null;
+    state.cardCount = applied.cardCount;
+    storePage(state.currentPage, applied.items);
   }
 
   // 用户点的是已经有的属性(比如又点了下载量)→ 用已有的那一个,不新建
@@ -1561,8 +1591,9 @@
   }
 
   function buildPayload(sorted) {
-    var raw = pool().length;
-    var unique = displayPool().length;
+    var bounds = pageBounds();
+    var raw = pool(bounds).length;
+    var unique = displayPool(bounds).length;
     return {
       generatedAt: Date.now(),
       sourceUrl: location.href,
@@ -2169,7 +2200,7 @@
   function handleAction(act, target) {
     if (act === "theme") switchTheme();
     else if (act === "minimize") { ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
-    else if (act === "redetect") { if (state.collecting) return; state.notes = []; detectCurrentPage(); }
+    else if (act === "redetect") { if (state.collecting) return; state.notes = []; state.pagesData.clear(); detectCurrentPage(); }
     else if (act === "scrollStop") cancelCollect();
     else if (act === "stopWaiting") stopWaiting();
     else if (act === "tab") {

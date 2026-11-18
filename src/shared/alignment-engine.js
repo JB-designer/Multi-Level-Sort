@@ -82,7 +82,7 @@
 
   var BASE_UNIT_MULTIPLIERS = {
     k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, b: 1e9, billion: 1e9,
-    "万": 1e4, "萬": 1e4, "亿": 1e8, "億": 1e8
+    "千": 1e3, "万": 1e4, "萬": 1e4, "百万": 1e6, "百萬": 1e6, "千万": 1e7, "千萬": 1e7, "亿": 1e8, "億": 1e8
   };
   var PAGE_LANGS = [];
   try {
@@ -102,7 +102,7 @@
     .map(function (u) { return escapeUnit(u) + (/[a-z.]$/i.test(u) ? "(?![a-z])" : ""); })
     .join("|");
   // 单位字母(k/m/b…)后面紧跟着别的字母时不算单位:"3 bedrooms" 的 b 是单词的一部分,"3m"、"1.2k" 才是单位
-  var UNIT_SRC = "(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
+  var UNIT_SRC = "(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "百万|百萬|千万|千萬|千|万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
   var NUMBER_RE = new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*" + UNIT_SRC + "?\\b", "i");
   var BYTE_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*(bytes?|kb|mb|gb|tb)\\b", "i");
   var PERCENT_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*%");
@@ -150,7 +150,7 @@
     if (pct) return readNumberToken(pct[1], false);
     // 注意:\b 对中文单位(万/亿)无效,用负向前瞻判定后缀边界
     var match = EXTRA_UNIT_ALT ? text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(" + EXTRA_UNIT_ALT + ")")) : null;
-    if (!match) match = text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(万|萬|亿|億|k|m|b|thousand|million|billion)?(?![a-zA-Z0-9])", "i"));
+    if (!match) match = text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(百万|百萬|千万|千萬|千|万|萬|亿|億|k|m|b|thousand|million|billion)?(?![a-zA-Z0-9])", "i"));
     if (!match) return null;
     var suffix = normalizeText(match[3] || "").toLowerCase();
     var num = readNumberToken(match[2], Boolean(suffix));
@@ -169,9 +169,10 @@
       var c = colon[3] == null ? null : Number(colon[3]);
       return c == null ? a * 60 + b : a * 3600 + b * 60 + c;
     }
-    var units = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(小时|小時|hours?|hrs?|h)\b/);
-    var mins = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|min)\b/);
-    var secs = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(秒|seconds?|secs?)\b/);
+    // 单位后面只要不是字母就算结束:"1h30m" 里 h 后面紧跟数字也要认
+    var units = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(小时|小時|hours?|hrs?|h)(?![a-z])/);
+    var mins = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|min|m)(?![a-z])/);
+    var secs = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(秒|seconds?|secs?|s)(?![a-z])/);
     if (units || mins || secs) {
       return Math.round(
         (units ? Number(units[1]) * 3600 : 0) +
@@ -243,8 +244,12 @@
     return null;
   }
 
+  // "1h 30m"、"1h30m"、"2 小时 5 分钟":同时有小时和分钟才算时长("3h" 单独出现常是"3 小时前")
+  var HM_DURATION_RE = /^\d+(?:\.\d+)?\s*(?:小时|小時|hours?|hrs?|h)\s*\d+\s*(?:分钟|分鐘|minutes?|mins?|min|m)(?:\s*\d+\s*(?:秒|seconds?|secs?|s))?$/i;
+
   function looksLikeDuration(text) {
-    return DURATION_RE.test(" " + normalizeText(text) + " ");
+    var normalized = normalizeText(text);
+    return DURATION_RE.test(" " + normalized + " ") || HM_DURATION_RE.test(normalized);
   }
 
   function looksLikeDate(text) {
@@ -496,13 +501,20 @@
       return a.textLength - b.textLength;
     });
 
-    var selected = [];
-    for (var s = 0; s < scored.length && selected.length < maxCards * 2; s += 1) {
-      insertNonOverlapping(selected, scored[s]);
-    }
-
+    var hasLayout = pageHasLayout(doc);
+    var selected = selectNonOverlapping(scored, maxCards);
     var clusters = clusterBySignature(selected);
-    var main = pickMainCluster(clusters, pageHasLayout(doc));
+    var main = pickMainCluster(clusters, hasLayout);
+    if (!main) {
+      // 卡片很少(十来张)时,整个列表的外框可能比单张卡片得分更高,把卡片全挤掉。
+      // 只在这时去掉"直接包着 3 个以上同样结构候选"的外框再选一次;能正常找到卡片的页面不受影响。
+      var withoutLists = dropListContainers(scored);
+      if (withoutLists.length < scored.length) {
+        selected = selectNonOverlapping(withoutLists, maxCards);
+        clusters = clusterBySignature(selected);
+        main = pickMainCluster(clusters, hasLayout);
+      }
+    }
     if (!main) return { roots: [], signature: "", clusterSizes: summarizeClusters(clusters) };
 
     var roots = main.candidates.map(function (c) { return c.element; });
@@ -599,6 +611,40 @@
     var stripped = stripDateAndDuration(text);
     var matches = stripped.match(new RegExp(NUM_TOKEN_SRC + "\\s*(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "万|萬|亿|億|(?:kb|mb|gb|k|m|b)(?![a-z]))?", "gi"));
     return matches ? Math.min(matches.length, 8) : 0;
+  }
+
+  function cardsWithSignature(doc, signature, limits) {
+    var seeds = collectSeeds(doc, (limits && limits.maxSeeds) || MAX_SEEDS);
+    var matches = seeds.filter(function (element) { return sigOf(element) === signature && scoreCandidate(element); });
+    var roots = matches.filter(function (element) {
+      return !matches.some(function (other) { return other !== element && other.contains(element); });
+    });
+    roots.sort(compareDomOrder);
+    return roots.slice(0, (limits && limits.maxCards) || MAX_CARDS);
+  }
+
+  function selectNonOverlapping(scored, maxCards) {
+    var selected = [];
+    for (var s = 0; s < scored.length && selected.length < maxCards * 2; s += 1) {
+      insertNonOverlapping(selected, scored[s]);
+    }
+    return selected;
+  }
+
+  function dropListContainers(scored) {
+    var scoredSet = new Set(scored.map(function (c) { return c.element; }));
+    var lists = new Set();
+    var counts = new Map();
+    for (var i = 0; i < scored.length; i += 1) {
+      var parent = scored[i].element.parentElement;
+      if (!parent || !scoredSet.has(parent)) continue;
+      var key = sigOf(scored[i].element);
+      var byParent = counts.get(parent);
+      if (!byParent) { byParent = {}; counts.set(parent, byParent); }
+      byParent[key] = (byParent[key] || 0) + 1;
+      if (byParent[key] >= MIN_CLUSTER_SIZE) lists.add(parent);
+    }
+    return scored.filter(function (c) { return !lists.has(c.element); });
   }
 
   function insertNonOverlapping(selected, candidate) {
@@ -1439,7 +1485,7 @@
   // "热度: 157 收藏: 3 留言: 0" 这类多指标同文本节点:
   // 按 "label: 数值" 对拆成虚拟 slot(path#label),每个 label 一个候选字段。
   // 值捕获包含时间/容量单位与"前/ago",这样 "Added: 15 d"、"添加时间: 1 小时 前" 能整体作为值
-  var PAIR_RE = /([一-龥A-Za-z][一-龥A-Za-z ]{0,13}?)\s*[:：]\s*((?:(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?![\d])|\d{1,3}(?:[ '’]\d{3})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*)\s*(?:万|萬|亿|億|bytes?\b|[kmgt]b\b|[kKmMbB]\b|days?\b|d\b|hours?\b|hrs?\b|h\b|minutes?\b|mins?\b|weeks?\b|wks?\b|w\b|months?\b|mos?\b|years?\b|yrs?\b|y\b|秒|分钟|分鐘|小时|小時|天|日|周|週|星期|个月|個月|月|年)?\s*(?:前|ago\b)?)/gi;
+  var PAIR_RE = /([一-龥A-Za-z][一-龥A-Za-z ]{0,13}?)\s*[:：]\s*((?:\d{1,3}:\d{2}(?::\d{2})?(?![\d:])|(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?![\d])|\d{1,3}(?:[ '’]\d{3})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*)\s*(?:百万|百萬|千万|千萬|千|万|萬|亿|億|bytes?\b|[kmgt]b\b|[kKmMbB]\b|days?\b|d\b|hours?\b|hrs?\b|h\b|minutes?\b|mins?\b|weeks?\b|wks?\b|w\b|months?\b|mos?\b|years?\b|yrs?\b|y\b|秒|分钟|分鐘|小时|小時|天|日|周|週|星期|个月|個月|月|年)?\s*(?:前|ago\b)?)/gi;
 
   function extractLabeledPairs(text) {
     var pairs = [];
@@ -2442,6 +2488,10 @@
     var opts = options || {};
     var found = findCards(doc, opts.limits);
     var roots = found.roots;
+    if (!roots.length && rule && rule.cardSignature) {
+      // 列表最后一页常只剩一两张卡,凑不成"一组";已经知道卡片长什么样时,按已知的卡片结构直接找
+      roots = cardsWithSignature(doc, rule.cardSignature, opts.limits);
+    }
     if (rule && rule.cardSignature && found.signature && found.signature !== rule.cardSignature) {
       // 主簇签名与规则不符 → 规则可能失效,仍尝试提取但降置信
       opts.signatureMismatch = true;
