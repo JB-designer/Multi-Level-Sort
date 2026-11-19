@@ -38,7 +38,7 @@
 
   var DURATION_RE = /(?:^|[^\d:])(\d{1,3}:\d{2}(?::\d{2})?)(?:$|[^\d:])/;
   var DATE_TIME_RE = /\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{2}/;
-  var ABS_DATE_RE = /\b(?:19|20)\d{2}[-/.年]\s?\d{1,2}[-/.月]\s?\d{1,2}日?\b|\b\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+(?:19|20)\d{2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d{2}\b/i;
+  var ABS_DATE_RE = /\b(?:19|20)\d{2}[-/.年]\s?\d{1,2}[-/.月]\s?\d{1,2}日?\b|\b\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(?:19|20)\d{2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d{2}\b/i;
   var REL_DATE_RE = /(\d+(?:\.\d+)?)\s*(秒|分钟|分鐘|小时|小時|天|日|周|週|星期|个月|個月|月|年|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s*(前|ago)/i;
   var JUST_NOW_RE = /刚刚|剛剛|just now|today|昨天|yesterday/i;
   var COMPACT_REL_RE = /^(\d+(?:\.\d+)?)\s*(d|days?|h|hrs?|hours?|min|mins|minutes?|w|wks?|weeks?|mo|mos|months?|y|yrs?|years?)$/i;
@@ -226,7 +226,8 @@
 
     var abs = DATE_TIME_RE.test(text) ? null : text.match(ABS_DATE_RE);
     if (abs) {
-      var cleaned = abs[0].replace(/[年月]/g, "-").replace(/日/g, "").replace(/\s+/g, " ");
+      // "November 10th 2026":序数后缀去掉才能解析
+      var cleaned = abs[0].replace(/[年月]/g, "-").replace(/日/g, "").replace(/(\d)(?:st|nd|rd|th)\b/gi, "$1").replace(/\s+/g, " ");
       // 只有日期没有时间的值按"本地的那一天"读;new Date("2024-03-05") 会当成 UTC,
       // 在中国/美国时区会差一天
       var ymd = cleaned.match(/^(\d{4})[-/.]\s?(\d{1,2})[-/.]\s?(\d{1,2})$/);
@@ -409,6 +410,8 @@
     var latin = (text.match(/[A-Za-z]/g) || []).length;
     return cjk * 2 > latin;
   }
+  var STYLE_VALUE_TOKEN_RE = /^(?:[a-z0-9\/-]+:)*-?[a-z]+(?:-[a-z]+)*-\d+(?:\.\d+)?$/i;
+
   function matchCodeWords(context) {
     var tokens = normalizeText(context).split(" ");
     var found = null;
@@ -419,6 +422,8 @@
     for (var t = 0; t < tokens.length; t += 1) {
       var token = tokens[t];
       if (!token || token.length > 40) continue;
+      // "单词-数字" 形状的样式名(duration-300、gap-4、hover:duration-300)是写给浏览器的样式数值,不是名字
+      if (STYLE_VALUE_TOKEN_RE.test(token)) continue;
       var whole = token.replace(/^[^A-Za-z\u4e00-\u9fa5]+|[^A-Za-z\u4e00-\u9fa5]+$/g, "");
       if (whole) words.push({ w: whole, piece: false });
       var pieces = token.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^A-Za-z]+/);
