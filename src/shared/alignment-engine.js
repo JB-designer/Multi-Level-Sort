@@ -1658,7 +1658,7 @@
       labelInfo = finishLabel(pairLabel, matchCanonical(pairLabel), "text-pair");
     } else {
       var split = splitLabelAndValue(texts, typing.type);
-      labelInfo = inferLabel(split.constantLabel, entries, path);
+      labelInfo = inferLabel(split.constantLabel, entries, path, typing.type);
     }
 
     // 从旁边图标猜的名字和值的类型对不上(日期被猜成"文件大小")→ 不用这个名字
@@ -1722,7 +1722,7 @@
       suspect: suspect,
       preChecked: isSortable && !suspect && coverage >= COVERAGE_TRUST && Boolean(labelInfo.canonical),
       // 没名字(或名字是从图标线索猜的,可能因重名被撤掉)→ 记下卡片里的图标,面板用它来显示
-      icon: isSortable && kind === "text" && (!labelInfo.display || labelInfo.source === "icon") ? iconForEntries(entries) : null
+      icon: isSortable && kind === "text" && (!labelInfo.display || labelInfo.source === "icon" || labelInfo.source === "own-label") ? iconForEntries(entries) : null
     };
   }
 
@@ -1832,7 +1832,7 @@
       .slice(0, 40);
   }
 
-  function inferLabel(constantLabel, entries, path) {
+  function inferLabel(constantLabel, entries, path, slotType) {
     // 1) slot 内恒定文本
     if (constantLabel) {
       var canonical = matchCanonical(constantLabel);
@@ -1868,8 +1868,11 @@
 
     // 3.5) 数字所在元素自己写的名字(按钮的 aria-label / title):网站写明的名字比按图标猜的可靠
     var ownCounts = {};
-    for (var oe = 0; oe < entries.length; oe += 1) {
-      var ownRaw = extractLabelPart(entries[oe].occurrence.context.ownLabel || "", "number");
+    for (var oe = 0; slotType !== "text" && oe < entries.length; oe += 1) {
+      // 提示文字里本身带着数字("15.3k users")时,已有的"隐藏提示文字"规则会处理,这里只认纯名字("收藏")
+      var ownText = entries[oe].occurrence.context.ownLabel || "";
+      if (/\d/.test(ownText)) continue;
+      var ownRaw = extractLabelPart(ownText, "number");
       if (ownRaw && ownRaw.length <= 20 && !looksLikeNumber(ownRaw)) ownCounts[ownRaw] = (ownCounts[ownRaw] || 0) + 1;
     }
     for (var ownKey in ownCounts) {
@@ -2624,7 +2627,7 @@
       return { ok: false, reason: "not-sortable-type", sample: texts.slice(0, 3) };
     }
     var split = splitLabelAndValue(texts, typing.type);
-    var labelInfo = inferLabel(split.constantLabel, entries, path);
+    var labelInfo = inferLabel(split.constantLabel, entries, path, typing.type);
     if (!labelInfo.canonical) {
       if (typing.type === "date") labelInfo = defaultCanonicalLabel(labelInfo, "uploadDate");
       else if (typing.type === "duration") labelInfo = defaultCanonicalLabel(labelInfo, "durationSeconds");
@@ -2646,7 +2649,7 @@
         labelInfo: labelInfo,
         values: texts,
         total: total,
-        icon: !labelInfo.display || labelInfo.source === "icon" ? iconForEntries(entries) : null
+        icon: !labelInfo.display || labelInfo.source === "icon" || labelInfo.source === "own-label" ? iconForEntries(entries) : null
       })]
     };
   }
