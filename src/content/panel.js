@@ -188,9 +188,10 @@
         state.manyCards = manyCardsOf(applied);
         state.cardSignature = applied.signature || state.rule.cardSignature;
         state.rule.slots.forEach(function (slot) {
-          if (slot.label || slot.siteLabel || slot.icon || slot.excluded) return;
+          if (slot.icon || slot.excluded) return;
           try { slot.icon = engine.iconForSlot(document, slot); } catch (e) { slot.icon = null; }
         });
+        refreshSavedNames(state.rule.slots);
         state.candidates = state.rule.slots.map(function (slot) {
           return Object.assign({}, slot, {
             coverage: applied.fieldCoverage[slot.id] || { count: 0, total: applied.cardCount },
@@ -427,6 +428,23 @@
 
   /* ================= 字段与排序规则 ================= */
 
+  // 以前保存的设置里存着当时起的名字:按现在的起名规则重新起一次,只换名字和图标,
+  // 字段编号、排序规则都不动。按位置对上同一个字段,对不上的保持原样
+  function refreshSavedNames(slots) {
+    var fresh;
+    try { fresh = engine.discover(document, { pageUrl: location.href }); } catch (e) { return; }
+    if (!fresh || !fresh.ok) return;
+    var byPlace = {};
+    fresh.candidates.forEach(function (c) { byPlace[[c.path, c.textIndex, c.kind, c.attr || ""].join("|")] = c; });
+    slots.forEach(function (slot) {
+      var match = byPlace[[slot.path, slot.textIndex, slot.kind, slot.attr || ""].join("|")];
+      if (!match || slot.excluded) return;
+      slot.label = match.label;
+      slot.siteLabel = match.siteLabel;
+      if (match.icon) slot.icon = match.icon;
+    });
+  }
+
   function sortableCandidates() {
     return state.candidates.filter(function (c) { return !c.excluded && c.type !== "text"; });
   }
@@ -437,7 +455,7 @@
 
   function fieldCatalog() {
     var items = displayPool();
-    return sortableCandidates().map(function (slot) {
+    var catalog = sortableCandidates().map(function (slot) {
       var count = 0;
       var example = null;
       items.forEach(function (item) {
@@ -450,7 +468,7 @@
       var field = {
         id: slot.id,
         label: named ? core.resultView.fieldName({ label: named }) : "",
-        icon: named ? null : slot.icon || null,
+        icon: slot.icon || null,
         type: slot.type,
         count: count,
         total: items.length,
@@ -462,6 +480,10 @@
       field.exampleValue = shown && shown !== "—" ? shown : "";
       return field;
     });
+    // 叫不出名字的数字有好几个时,按顺序编号("第 1 个数字"),只有一个就叫"数字"
+    var unnamed = catalog.filter(function (f) { return !f.label; });
+    if (unnamed.length > 1) unnamed.forEach(function (f, i) { f.ordinal = i + 1; });
+    return catalog;
   }
 
   function resetDefaultSortRule() {

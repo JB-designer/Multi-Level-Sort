@@ -51,7 +51,8 @@ test("the icon is saved with the site settings", () => {
 
 test("unnamed numbers never show the internal code", () => {
   assert.equal(fieldName({ id: "metric-6-o5wvj", label: "" }), "数字");
-  assert.equal(fieldName({ id: "metric-6-o5wvj", label: "", exampleValue: "773" }), "数字（如 773）");
+  assert.equal(fieldName({ id: "metric-6-o5wvj", label: "", exampleValue: "773" }), "数字 如 773");
+  assert.equal(fieldName({ id: "metric-7-o5wvj", label: "", ordinal: 2 }), "第 2 个数字");
   assert.equal(fieldName({ id: "likes-abc", label: "点赞数 Likes" }), "点赞数");
 });
 
