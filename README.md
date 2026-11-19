@@ -37,6 +37,8 @@ Sites with numbered page links work best for reading across multiple pages. Supp
 
 Selecting a page range sets what the extension attempts to read. A website’s structure or access restrictions may prevent some pages from being collected.
 
+YouTube and Reddit pages are not supported yet.
+
 ## Installation
 
 ### Chrome Web Store
@@ -125,6 +127,8 @@ Source code is licensed under MIT. See [`LICENSE`](LICENSE) for details.
 - **表格和纯文字列表**：不属于本扩展的主要适用范围。
 
 你选择的页面范围，是扩展尝试读取的范围。网站结构或访问限制可能导致部分页面无法读取。
+
+暂不支持 YouTube 和 Reddit 页面。
 
 ## 安装
 

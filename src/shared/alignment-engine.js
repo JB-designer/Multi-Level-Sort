@@ -587,6 +587,22 @@
     var selected = selectNonOverlapping(scored, maxCards);
     var clusters = clusterBySignature(selected);
     var main = pickMainCluster(clusters, hasLayout);
+    // 整个列表的外框得分可能比每张卡片都高(卡片都是纯文字、没有图时),被当成"一张卡片",
+    // 里面的卡片全被挤掉,只剩旁边的小列表凑成一组。已经找到一组时也再试一次:
+    // 去掉"里面装着 3 个以上同样结构候选"的外框重新分组,整组面积更大才换过去
+    if (main && hasLayout) {
+      var noBoxes = dropWrappingBoxes(scored);
+      if (noBoxes.length < scored.length) {
+        var boxFreeSelected = selectNonOverlapping(noBoxes, maxCards);
+        var boxFreeClusters = clusterBySignature(boxFreeSelected);
+        var boxFreeMain = pickMainCluster(boxFreeClusters, hasLayout);
+        if (boxFreeMain && groupArea(boxFreeMain) > groupArea(main)) {
+          main = boxFreeMain;
+          clusters = boxFreeClusters;
+          selected = boxFreeSelected;
+        }
+      }
+    }
     if (!main) {
       // 正文的卡片外壳不一样(比如 2 个回答包在 List-item 里,1 个包在 AnswerCard 里),
       // 但里面的内容结构一样:剥掉只包着一个元素的外壳,按里面的结构再分一次组
@@ -739,6 +755,25 @@
       for (var up = element.parentElement; up && !chosenAncestors.has(up); up = up.parentElement) chosenAncestors.add(up);
     }
     return selected;
+  }
+
+  // 和 dropListContainers 一样去掉列表外框,但不要求卡片是外框的直接子元素(中间可以隔着几层包装)
+  function dropWrappingBoxes(scored) {
+    var counts = new Map();
+    for (var i = 0; i < scored.length; i += 1) counts.set(scored[i].element, null);
+    var lists = new Set();
+    for (var j = 0; j < scored.length; j += 1) {
+      var key = sigOf(scored[j].element);
+      for (var up = scored[j].element.parentElement; up; up = up.parentElement) {
+        if (!counts.has(up)) continue;
+        var bySig = counts.get(up);
+        if (!bySig) { bySig = {}; counts.set(up, bySig); }
+        bySig[key] = (bySig[key] || 0) + 1;
+        if (bySig[key] >= MIN_CLUSTER_SIZE) lists.add(up);
+      }
+    }
+    if (!lists.size) return scored;
+    return scored.filter(function (c) { return !lists.has(c.element); });
   }
 
   function dropListContainers(scored) {

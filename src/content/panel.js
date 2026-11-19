@@ -52,6 +52,7 @@
     lastRequested: null,     // 最近一次要读的页码范围 { from, to, readToEnd }
     flashRuleIndex: -1,      // 下拉框互换规则后,需要短暂高亮的那一行
     menuIndex: -1,           // 打开着数字菜单的规则序号
+    notSortableOpen: false,  // 数字菜单里"不可排序项"是否展开(只在当前页面记住)
     lastResultId: null,      // 最近一次排序的结果缓存 id;有值且无任何改动时,前 5 名下面显示「打开完整结果」
     setupFolded: false,      // 排好后设置区收成一行摘要,点「修改」展开
     readTab: "pages",        // 读取范围的两个标签:"pages" 按页数 / "cards" 按卡片数(没有页码时默认按卡片数)
@@ -2004,6 +2005,9 @@
     ".mi .r{white-space:nowrap}",
     ".cov{font-size:11px;color:var(--warning);background:var(--warningSoft);border-radius:4px;padding:0 5px;white-space:nowrap}",
     ".msep{border-top:1px solid var(--border);margin:4px 0}",
+    ".xfold>summary{list-style:none;cursor:pointer;display:block;padding-bottom:7px}.xfold>summary::-webkit-details-marker{display:none}",
+    ".xfold>summary:hover{background:var(--subtle)}.xfold>summary:focus-visible{background:var(--subtle);outline:none}",
+    ".xlist{max-height:min(200px,40vh);overflow:auto}.xlist:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}",
     ".add{margin:0 0 12px}",
     ".top5{margin-top:8px;border:1px solid var(--border);border-radius:10px;background:var(--field);padding:2px 10px 8px}",
     ".div{display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:12px;color:var(--text3)}",
@@ -2660,9 +2664,12 @@
 
   function renderMenu(rule, index, catalog) {
     var menu = el("div", "menu");
-    menu.setAttribute("role", "listbox");
-    menu.setAttribute("aria-label", t("menuAria"));
     menu.appendChild(el("div", "mh", t("menuSortable")));
+    // 只有可选的排序项放在 listbox 里;手动选取按钮和下面的折叠区不是"选项"
+    var options = el("div", "");
+    options.setAttribute("role", "listbox");
+    options.setAttribute("aria-label", t("menuAria"));
+    menu.appendChild(options);
     catalog.forEach(function (field) {
       var item = el("button", "mi" + (field.id === rule.field ? " cur" : ""));
       item.setAttribute("role", "option");
@@ -2677,7 +2684,7 @@
       var low = field.total && field.count / field.total < 0.75;
       item.appendChild(el("span", low ? "cov r" : "s r", cov));
       item.addEventListener("click", function () { chooseField(index, field.id, catalog); });
-      menu.appendChild(item);
+      options.appendChild(item);
     });
     var pick = el("button", "mi");
     pick.appendChild(el("span", "n link", t("manualSelect")));
@@ -2686,15 +2693,34 @@
     var excluded = excludedCandidates();
     if (excluded.length) {
       menu.appendChild(el("div", "msep"));
-      menu.appendChild(el("div", "mh", t("menuNotSortable")));
+      // 不可排序项默认收起(早期版本的做法),标题带数量;展开状态只在当前页面记住,刷新后恢复收起
+      var fold = document.createElement("details");
+      fold.className = "xfold";
+      fold.open = state.notSortableOpen;
+      var head = document.createElement("summary");
+      head.className = "mh";
+      head.appendChild(document.createTextNode(t("menuNotSortableCount", excluded.length) + " "));
+      var caret = el("span", "caret", state.notSortableOpen ? "▴" : "▾");
+      caret.setAttribute("aria-hidden", "true");
+      head.appendChild(caret);
+      fold.appendChild(head);
+      var rows = el("div", "xlist");
+      rows.setAttribute("role", "list");
+      rows.setAttribute("aria-label", t("menuNotSortable"));
+      rows.tabIndex = 0;
       excluded.forEach(function (candidate) {
         var off = el("div", "mi off");
-        off.setAttribute("role", "option");
-        off.setAttribute("aria-disabled", "true");
+        off.setAttribute("role", "listitem");
         off.appendChild(el("span", "n", excludedName(candidate)));
         off.appendChild(el("span", "s", excludedReason(candidate)));
-        menu.appendChild(off);
+        rows.appendChild(off);
       });
+      fold.appendChild(rows);
+      fold.addEventListener("toggle", function () {
+        state.notSortableOpen = fold.open;
+        caret.textContent = fold.open ? "▴" : "▾";
+      });
+      menu.appendChild(fold);
     }
     return menu;
   }
