@@ -33,7 +33,7 @@
    * ---------------------------------------------------------------- */
 
   function normalizeText(value) {
-    return String(value == null ? "" : value).replace(/ /g, " ").replace(/\s+/g, " ").trim();
+    return String(value == null ? "" : value).replace(/[\u200B\u2060\uFEFF]/g, "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
   }
 
   var DURATION_RE = /(?:^|[^\d:])(\d{1,3}:\d{2}(?::\d{2})?)(?:$|[^\d:])/;
@@ -888,6 +888,7 @@
       attrHints: normalizeText(parentParts.concat(prevParts).filter(Boolean).join(" ")).slice(0, 400),
       attrHintsNext: normalizeText(nextParts.filter(Boolean).join(" ")).slice(0, 200),
       prevSiblingText: prevSiblingText,
+      ownLabel: element.getAttribute ? normalizeText(element.getAttribute("aria-label") || element.getAttribute("title") || "") : "",
       iconEl: iconBefore || iconAfter
     };
   }
@@ -1336,8 +1337,8 @@
   }
 
   function splitMergeable(candidate) {
-    return !candidate.excluded && Boolean(candidate._values) && Boolean(candidate.canonicalId) &&
-      candidate.source !== "icon" && candidate.kind !== "attr";
+    return !candidate.excluded && Boolean(candidate._values) && Boolean(candidate.canonicalId || normalizeText(candidate.siteLabel)) &&
+      candidate.source !== "icon" && (candidate.kind !== "attr" || candidate.type === "date");
   }
 
   function splitPartners(a, b) {
@@ -1345,6 +1346,7 @@
     var left = normalizeText(a.siteLabel).toLowerCase();
     var right = normalizeText(b.siteLabel).toLowerCase();
     if (left && right && left !== right) return false;
+    if (!a.canonicalId && !(left && left === right)) return false;
     // 同一张卡片上两个位置都有数:必须是同一个数(只是写了两遍),不同就是两种数据("今日"和"总计")
     for (var key in b._values) {
       if (!(key in a._values)) continue;
@@ -1352,6 +1354,8 @@
       var y = typeof b._values[key] === "string" ? Date.parse(b._values[key]) : b._values[key];
       if (typeof x !== "number" || typeof y !== "number" || isNaN(x) || isNaN(y)) return false;
       if (Math.abs(x - y) > Math.max(Math.abs(x), Math.abs(y)) * 0.05) return false;
+      // 藏在网页信息里的日期(只有这类才新加了合并):要求同一天以内,5% 对日期太宽
+      if ((a.kind === "attr" || b.kind === "attr") && Math.abs(x - y) > 86400000) return false;
     }
     return true;
   }
@@ -1862,6 +1866,22 @@
       }
     }
 
+    // 3.5) 数字所在元素自己写的名字(按钮的 aria-label / title):网站写明的名字比按图标猜的可靠
+    var ownCounts = {};
+    for (var oe = 0; oe < entries.length; oe += 1) {
+      var ownRaw = extractLabelPart(entries[oe].occurrence.context.ownLabel || "", "number");
+      if (ownRaw && ownRaw.length <= 20 && !looksLikeNumber(ownRaw)) ownCounts[ownRaw] = (ownCounts[ownRaw] || 0) + 1;
+    }
+    for (var ownKey in ownCounts) {
+      if (ownCounts[ownKey] / entries.length >= 0.6) {
+        var ownCanonical = matchCanonical(ownKey);
+        var ownInfo = finishLabel(ownKey, ownCanonical, "own-label");
+        // 写的就是标准英文名("likes"):显示和以前一样用标准写法
+        if (ownCanonical && ownKey.toLowerCase() === ownCanonical.en.toLowerCase()) ownInfo.display = ownCanonical.zh + " " + ownCanonical.en;
+        return ownInfo;
+      }
+    }
+
     // 4) icon / attr 语义:先用前置图标(👍 182 中 182 属于前面的 👍),没有再看后置
     for (var pass = 0; pass < 2; pass += 1) {
       var hintCounts = {};
@@ -1945,6 +1965,8 @@
         var right = candidates[j];
         if (!right || right.excluded || right.canonicalId !== left.canonicalId) continue;
         if (right.type !== left.type) continue;
+        // 网站给两个数写了不同的名字(如"收藏"和"喜欢"),就是两种数据,不是同一个数写了两遍
+        if (left.siteLabel && right.siteLabel && normalizeText(left.siteLabel).toLowerCase() !== normalizeText(right.siteLabel).toLowerCase()) continue;
         var loser = left.coverage.count >= right.coverage.count ? right : left;
         loser.shadowed = true;
       }
