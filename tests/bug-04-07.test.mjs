@@ -36,7 +36,8 @@ test("bug 04: a price glued to its currency sign is a sortable price", () => {
   const result = engine.discover(bookCards(10, () => el("span", {}, [])));
   const price = sortable(result).find((c) => c.canonicalId === "price");
   assert.ok(price, "£51.77 should be read as a price");
-  assert.equal(fieldName(price), "价格");
+  // 网站上没写名字时只给网页语言的名字,不替用户翻译(James 2026-11-19):英文网页 → "Price"
+  assert.equal(fieldName(price), "Price");
   assert.equal(result.items[1].metrics[price.id], 12.37);
 });
 
@@ -86,7 +87,7 @@ test("bug 07: the same number written twice in a card shows up once, with the vi
   const params = sortable(result).filter((c) => /B$/.test(c.examples[0]));
   assert.equal(params.length, 1, "one field for the model size");
   assert.equal(params[0].canonicalId, "parameters");
-  assert.equal(fieldName(params[0]), "参数量");
+  assert.equal(fieldName(params[0]), "Parameters"); // 网站写的是英文,名字不翻译(James 2026-11-19)
   assert.equal(params[0].examples[0], "7B");
 });
 

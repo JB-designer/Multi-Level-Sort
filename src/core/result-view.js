@@ -20,7 +20,7 @@ function fieldOf(catalog, id) {
 export function fieldName(field) {
   // 旧的内置名称带英文("收藏/喜欢 Favorites / Likes"):界面只用中文部分
   const label = String(field?.label || "").trim();
-  if (!label) return field?.exampleValue ? t("numberEg", field.exampleValue) : t("number");
+  if (!label) return field?.exampleValue ? `${unnamedName(field)} ${t("eg", field.exampleValue)}` : unnamedName(field);
   if (!/[\u4e00-\u9fa5]/.test(label)) return shorten(label);
   if (!isZh) {
     // 英文界面:取最后一段中文后面的英文名("下载量 Downloads" → "Downloads");只有中文名时照网站原样
@@ -29,6 +29,11 @@ export function fieldName(field) {
   }
   const zh = label.split(/\s+[A-Za-z]/)[0].split("/")[0].trim();
   return shorten(zh || label);
+}
+
+// 叫不出名字的数字:只有一个就叫"数字";有几个就按在卡片上出现的顺序叫"第 1 个数字""第 2 个数字"
+export function unnamedName(field) {
+  return field?.ordinal ? t("numberN", field.ordinal) : t("number");
 }
 
 // 网站藏在提示里的长名字("Number of parameters in the model")在菜单里截短,鼠标停上去看全名
@@ -89,12 +94,12 @@ export function renderFieldIcon(doc, icon, { glyphOk = false } = {}) {
   return node;
 }
 
-// 富文本场合(菜单、规则、卡片上的数字):有名字写名字;没名字有图标就放图标;都没有写"数字"
+// 富文本场合(菜单、规则、卡片上的数字):有图标先放图标,后面一定跟名字;没名字写"数字 / 第 N 个数字"
 export function appendFieldLabel(doc, container, field, options = {}) {
   const label = String(field?.label || "").trim();
-  const icon = label ? null : renderFieldIcon(doc, field?.icon, options);
+  const icon = renderFieldIcon(doc, field?.icon, options);
   if (icon) container.appendChild(icon);
-  else container.appendChild(doc.createTextNode(label ? fieldName(field) : t("number")));
+  container.appendChild(doc.createTextNode(label ? fieldName(field) : unnamedName(field)));
   if (label && fieldName(field).endsWith("…") && container.setAttribute) container.setAttribute("title", label);
   return Boolean(icon);
 }
@@ -119,7 +124,8 @@ export function appendSentence(doc, container, text, fields, options = {}) {
   for (const part of parts) {
     if (typeof part === "string") { container.appendChild(doc.createTextNode(part)); continue; }
     const icon = renderFieldIcon(doc, part.icon, options);
-    container.appendChild(icon || doc.createTextNode(fieldName(part)));
+    if (icon) container.appendChild(icon);
+    container.appendChild(doc.createTextNode(fieldName(part)));
   }
 }
 

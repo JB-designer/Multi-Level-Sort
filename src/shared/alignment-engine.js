@@ -33,12 +33,12 @@
    * ---------------------------------------------------------------- */
 
   function normalizeText(value) {
-    return String(value == null ? "" : value).replace(/ /g, " ").replace(/\s+/g, " ").trim();
+    return String(value == null ? "" : value).replace(/[\u200B\u2060\uFEFF]/g, "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
   }
 
   var DURATION_RE = /(?:^|[^\d:])(\d{1,3}:\d{2}(?::\d{2})?)(?:$|[^\d:])/;
   var DATE_TIME_RE = /\d{4}-\d{2}-\d{2}[T\s]\d{1,2}:\d{2}/;
-  var ABS_DATE_RE = /\b(?:19|20)\d{2}[-/.年]\s?\d{1,2}[-/.月]\s?\d{1,2}日?\b|\b\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+(?:19|20)\d{2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d{2}\b/i;
+  var ABS_DATE_RE = /\b(?:19|20)\d{2}[-/.年]\s?\d{1,2}[-/.月]\s?\d{1,2}日?\b|\b\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(?:19|20)\d{2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d{2}\b/i;
   var REL_DATE_RE = /(\d+(?:\.\d+)?)\s*(秒|分钟|分鐘|小时|小時|天|日|周|週|星期|个月|個月|月|年|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s*(前|ago)/i;
   var JUST_NOW_RE = /刚刚|剛剛|just now|today|昨天|yesterday/i;
   var COMPACT_REL_RE = /^(\d+(?:\.\d+)?)\s*(d|days?|h|hrs?|hours?|min|mins|minutes?|w|wks?|weeks?|mo|mos|months?|y|yrs?|years?)$/i;
@@ -82,7 +82,7 @@
 
   var BASE_UNIT_MULTIPLIERS = {
     k: 1e3, thousand: 1e3, m: 1e6, million: 1e6, b: 1e9, billion: 1e9,
-    "万": 1e4, "萬": 1e4, "亿": 1e8, "億": 1e8
+    "千": 1e3, "万": 1e4, "萬": 1e4, "百万": 1e6, "百萬": 1e6, "千万": 1e7, "千萬": 1e7, "亿": 1e8, "億": 1e8
   };
   var PAGE_LANGS = [];
   try {
@@ -102,7 +102,7 @@
     .map(function (u) { return escapeUnit(u) + (/[a-z.]$/i.test(u) ? "(?![a-z])" : ""); })
     .join("|");
   // 单位字母(k/m/b…)后面紧跟着别的字母时不算单位:"3 bedrooms" 的 b 是单词的一部分,"3m"、"1.2k" 才是单位
-  var UNIT_SRC = "(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
+  var UNIT_SRC = "(?:" + (EXTRA_UNIT_ALT ? EXTRA_UNIT_ALT + "|" : "") + "百万|百萬|千万|千萬|千|万|萬|亿|億|(?:k|m|b|thousand|million|billion)(?![a-z]))";
   var NUMBER_RE = new RegExp("[-+]?" + NUM_TOKEN_SRC + "\\s*" + UNIT_SRC + "?\\b", "i");
   var BYTE_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*(bytes?|kb|mb|gb|tb)\\b", "i");
   var PERCENT_RE = new RegExp("(" + NUM_TOKEN_SRC + ")\\s*%");
@@ -150,7 +150,7 @@
     if (pct) return readNumberToken(pct[1], false);
     // 注意:\b 对中文单位(万/亿)无效,用负向前瞻判定后缀边界
     var match = EXTRA_UNIT_ALT ? text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(" + EXTRA_UNIT_ALT + ")")) : null;
-    if (!match) match = text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(万|萬|亿|億|k|m|b|thousand|million|billion)?(?![a-zA-Z0-9])", "i"));
+    if (!match) match = text.match(new RegExp("([-+]?)(" + NUM_TOKEN_SRC + ")\\s*(百万|百萬|千万|千萬|千|万|萬|亿|億|k|m|b|thousand|million|billion)?(?![a-zA-Z0-9])", "i"));
     if (!match) return null;
     var suffix = normalizeText(match[3] || "").toLowerCase();
     var num = readNumberToken(match[2], Boolean(suffix));
@@ -169,9 +169,10 @@
       var c = colon[3] == null ? null : Number(colon[3]);
       return c == null ? a * 60 + b : a * 3600 + b * 60 + c;
     }
-    var units = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(小时|小時|hours?|hrs?|h)\b/);
-    var mins = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|min)\b/);
-    var secs = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(秒|seconds?|secs?)\b/);
+    // 单位后面只要不是字母就算结束:"1h30m" 里 h 后面紧跟数字也要认
+    var units = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(小时|小時|hours?|hrs?|h)(?![a-z])/);
+    var mins = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|min|m)(?![a-z])/);
+    var secs = text.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(秒|seconds?|secs?|s)(?![a-z])/);
     if (units || mins || secs) {
       return Math.round(
         (units ? Number(units[1]) * 3600 : 0) +
@@ -225,7 +226,8 @@
 
     var abs = DATE_TIME_RE.test(text) ? null : text.match(ABS_DATE_RE);
     if (abs) {
-      var cleaned = abs[0].replace(/[年月]/g, "-").replace(/日/g, "").replace(/\s+/g, " ");
+      // "November 10th 2026":序数后缀去掉才能解析
+      var cleaned = abs[0].replace(/[年月]/g, "-").replace(/日/g, "").replace(/(\d)(?:st|nd|rd|th)\b/gi, "$1").replace(/\s+/g, " ");
       // 只有日期没有时间的值按"本地的那一天"读;new Date("2024-03-05") 会当成 UTC,
       // 在中国/美国时区会差一天
       var ymd = cleaned.match(/^(\d{4})[-/.]\s?(\d{1,2})[-/.]\s?(\d{1,2})$/);
@@ -243,8 +245,12 @@
     return null;
   }
 
+  // "1h 30m"、"1h30m"、"2 小时 5 分钟":同时有小时和分钟才算时长("3h" 单独出现常是"3 小时前")
+  var HM_DURATION_RE = /^\d+(?:\.\d+)?\s*(?:小时|小時|hours?|hrs?|h)\s*\d+\s*(?:分钟|分鐘|minutes?|mins?|min|m)(?:\s*\d+\s*(?:秒|seconds?|secs?|s))?$/i;
+
   function looksLikeDuration(text) {
-    return DURATION_RE.test(" " + normalizeText(text) + " ");
+    var normalized = normalizeText(text);
+    return DURATION_RE.test(" " + normalized + " ") || HM_DURATION_RE.test(normalized);
   }
 
   function looksLikeDate(text) {
@@ -280,7 +286,7 @@
     { id: "views", zh: "浏览量", en: "Views", re: /^(?:views?|plays?|watch(?:es|ed)?|reads?|播放|观看|觀看|浏览|瀏覽|阅读|閱讀|阅览|閱覽|人气|人氣)$|次(?:观看|觀看|浏览|瀏覽|播放)/i },
     { id: "likes", zh: "点赞数", en: "Likes", re: /^(?:likes?|upvotes?|appreciations?|thumbs?\s*up|赞|讚|点赞|點贊|點讚|好评|好評)$/i },
     { id: "dislikes", zh: "点踩数", en: "Dislikes", re: /^(?:dislikes?|downvotes?|thumbs?\s*down|点踩|點踩|倒赞|倒讚|差评|差評)$/i },
-    { id: "favorites", zh: "收藏数", en: "Favorites", re: /^(?:favou?rites?|favs?|bookmarks?|collects?|stars?|收藏|喜欢|喜歡)$/i },
+    { id: "favorites", zh: "收藏数", en: "Favorites", re: /^(?:favou?rites?|favs?|bookmarks?|collects?|stars?|收藏)$/i },
     { id: "comments", zh: "评论数", en: "Comments", re: /^(?:comments?|replies|reply|讨论|討論|留言|评论|評論|回复|回覆)$|[则則条條]留言|[则則条條]评论/i },
     { id: "score", zh: "评分", en: "Rating", re: /^(?:score|rating|rate|points?|积分|積分|评分|評分|分)$|^out of\b.*\b(?:stars?|rating)\b|^(?:average|avg\.?)\s+(?:rating|score)$/i },
     { id: "heat", zh: "热度", en: "Popularity", re: /^(?:heat|hot|popularity|trending|热度|熱度|热门|熱門)$/i },
@@ -308,12 +314,32 @@
   function matchCanonical(label) {
     var text = normalizeText(label).replace(/[:：]+$/, "");
     if (!text) return null;
-    for (var i = 0; i < CANONICAL_VOCAB.length; i += 1) {
-      if (CANONICAL_VOCAB[i].re.test(text)) return CANONICAL_VOCAB[i];
+    var forms = [text];
+    var plain = spellingVariant(text);
+    if (plain && plain !== text) forms.push(plain);
+    for (var f = 0; f < forms.length; f += 1) {
+      for (var i = 0; i < CANONICAL_VOCAB.length; i += 1) {
+        if (CANONICAL_VOCAB[i].re.test(forms[f])) return CANONICAL_VOCAB[i];
+      }
     }
     // "£"、"US$"、"List: $"、"From $":数字前后的货币符号 = 价格
     if (CURRENCY_RE.test(text) && text.length <= 30) return vocabById("price");
     return null;
+  }
+
+  // 同一个词的不同写法统一成一种再查词典(只用来查,显示的字不变):
+  // 大小写、驼峰、- _ 当空格;英文结尾单独的 count / num / number / total 去掉;
+  // 中文开头的量词 次 / 条 / 人 / 个 去掉,结尾的 数 / 次数 / 量 去掉(去掉后至少剩两个字,"销量"不会变成"销")
+  function spellingVariant(text) {
+    var out = String(text).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[-_]+/g, " ");
+    out = normalizeText(out).toLowerCase();
+    out = out.replace(/\s+(?:count|counts|num|number|total)$/, "");
+    if (/[\u4e00-\u9fa5]/.test(out)) {
+      out = out.replace(/^[次条條人个個](?=[\u4e00-\u9fa5]{2})/, "");
+      var bare = out.replace(/(?:次数|次數|数|數|量)$/, "");
+      if (bare.length >= 2) out = bare;
+    }
+    return out;
   }
 
   var CURRENCY_RE = /[$£€¥￥₩₹₽₺₫฿₱₪]|\b(?:usd|eur|gbp|rmb|cny|jpy|zł|kr)\b|元/i;
@@ -365,6 +391,62 @@
 
   // 线索里出现两个以上不同意思的词(如 "stats download likes")→ 不猜,返回 null;
   // 起错名字比没有名字更糟(用户会按错的东西排序)。没名字时面板改用卡片里的图标。
+  // 代码里的字(class、图标文件名、data-*、aria-label 里的单词)逐个整词查词典,不在长串里找片段:
+  // "like-count" / "likeCount" / "comments" 认得出;"AnswerItem"、"人赞同了该回答" 不会因为含有"answer""回答"被认成回答数。
+  // 几个词指向不同意思 → 不认(起错名字比没名字更糟)
+  var ICON_WORDS = { playdata: "views", danmu: "danmaku" };
+  // 网页是中文还是别的语言:<html lang> 写了就用它,没写就看卡片上的字中文多还是字母多
+  var PAGE_ZH = null;
+  function pageName(vocab) {
+    if (PAGE_ZH === null) return /^zh/i.test(PAGE_LANGS[0] || "") ? vocab.zh : vocab.en;
+    return PAGE_ZH ? vocab.zh : vocab.en;
+  }
+  function detectPageZh(doc, roots) {
+    var lang = doc && doc.documentElement && doc.documentElement.getAttribute ? (doc.documentElement.getAttribute("lang") || "") : "";
+    if (lang) return /^zh/i.test(lang);
+    var text = "";
+    for (var i = 0; i < roots.length && i < 8; i += 1) text += roots[i].textContent || "";
+    var cjk = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    var latin = (text.match(/[A-Za-z]/g) || []).length;
+    return cjk * 2 > latin;
+  }
+  var STYLE_VALUE_TOKEN_RE = /^(?:[a-z0-9\/-]+:)*-?[a-z]+(?:-[a-z]+)*-\d+(?:\.\d+)?$/i;
+
+  function matchCodeWords(context) {
+    var tokens = normalizeText(context).split(" ");
+    var found = null;
+    var word = "";
+    // 代码名常把几个词连在一起("sic-BDC-playdata_square_line"、"Appreciations-icon-Z4i"):
+    // 按 - _ 大小写 数字 拆成单词,每个单词整个查词典
+    var words = [];
+    for (var t = 0; t < tokens.length; t += 1) {
+      var token = tokens[t];
+      if (!token || token.length > 40) continue;
+      // "单词-数字" 形状的样式名(duration-300、gap-4、hover:duration-300)是写给浏览器的样式数值,不是名字
+      if (STYLE_VALUE_TOKEN_RE.test(token)) continue;
+      var whole = token.replace(/^[^A-Za-z\u4e00-\u9fa5]+|[^A-Za-z\u4e00-\u9fa5]+$/g, "");
+      if (whole) words.push({ w: whole, piece: false });
+      var pieces = token.replace(/([a-z])([A-Z])/g, "$1 $2").split(/[^A-Za-z]+/);
+      if (pieces.length > 1) for (var q = 0; q < pieces.length; q += 1) if (pieces[q].length >= 3) words.push({ w: pieces[q], piece: true });
+    }
+    for (var i = 0; i < words.length; i += 1) {
+      var id = ICON_WORDS[words[i].w.toLowerCase()] || "";
+      var tokenWord = id ? words[i].w.toLowerCase() : "";
+      if (!id) {
+        var canonical = matchCanonical(words[i].w);
+        id = canonical && canonical.id !== "price" ? canonical.id : "";
+        // 拆出来的单个 "size"(如 a-size-base)是样式名,不是文件大小;整个写成 file-size 才算
+        if (id === "fileSize" && words[i].piece) id = "";
+      }
+      if (!id) continue;
+      if (found && found !== id && !sameMeaning(found, id)) return null;
+      if (!found) { found = id; word = tokenWord || words[i].w; }
+    }
+    if (!found) return null;
+    var vocab = vocabById(found);
+    return vocab ? { vocab: vocab, word: word, raw: !!ICON_WORDS[word.toLowerCase()] } : null;
+  }
+
   function matchIconHint(context) {
     var text = normalizeText(context).toLowerCase();
     if (!text) return null;
@@ -392,7 +474,12 @@
 
   var CLASS_TOKEN_SKIP_RE = /^(?:js-|is-|has-|was-|active|hover|focus|selected|open|closed|show|hide|hidden|visible|loaded|loading|lazy|first|last|odd|even|left|right|top|bottom|clearfix|fade|in|out|on|off)$|\d{3,}|^-|^_$/i;
 
-  function classTokensOf(element) {
+  // forPath = 用在卡片内部的位置路径里:路径用 > 分段、用 @ # 接属性名和标签名,含这些符号的 class
+  // (如 "@container"、"bg-[#fff]"、"[&>svg]:size-4")会把路径拆错,跳过它们。
+  // 只跳过真会拆错的符号,其余 class(如 "w-[72px]")照旧,以前保存的设置继续有效
+  var PATH_UNSAFE_TOKEN_RE = /[@#>]/;
+
+  function classTokensOf(element, forPath) {
     var raw = element.getAttribute ? (element.getAttribute("class") || "") : "";
     var tokens = normalizeText(raw).split(" ");
     var rating = RATING_IDENTITY_RE.test(raw);
@@ -403,6 +490,7 @@
       // 评分元素 class 里的分数("star-rating Three"、"rating-4")每张卡不同,不能算进位置
       if (rating && (NUMBER_WORDS[token.toLowerCase()] != null || RATING_TOKEN_RE.test(token))) continue;
       if (CLASS_TOKEN_SKIP_RE.test(token)) continue;
+      if (forPath && PATH_UNSAFE_TOKEN_RE.test(token)) continue;
       if (/\d/.test(token) && /[a-f0-9]{5,}/i.test(token)) continue; // css-module hash
       kept.push(token.toLowerCase());
     }
@@ -410,18 +498,22 @@
     return kept;
   }
 
-  function sigOf(element) {
+  function sigOf(element, forPath) {
     var tag = (element.tagName || "").toLowerCase();
-    var tokens = classTokensOf(element);
+    var tokens = classTokensOf(element, forPath);
     return tokens.length ? tag + "." + tokens.join(".") : tag;
   }
 
+  function pathSigOf(element) {
+    return sigOf(element, true);
+  }
+
   function indexAmongSameSig(element) {
-    var sig = sigOf(element);
+    var sig = pathSigOf(element);
     var index = 0;
     var node = element;
     while ((node = node.previousElementSibling)) {
-      if (sigOf(node) === sig) index += 1;
+      if (pathSigOf(node) === sig) index += 1;
     }
     return index;
   }
@@ -430,7 +522,7 @@
     var segments = [];
     var node = element;
     while (node && node !== cardRoot) {
-      segments.unshift(sigOf(node) + ":" + indexAmongSameSig(node));
+      segments.unshift(pathSigOf(node) + ":" + indexAmongSameSig(node));
       node = node.parentElement;
     }
     if (node !== cardRoot) return null; // element 不在 card 内
@@ -449,7 +541,7 @@
       var seen = 0;
       var child = node.firstElementChild;
       while (child) {
-        if (sigOf(child) === sig) {
+        if (pathSigOf(child) === sig) {
           if (seen === wanted) { found = child; break; }
           seen += 1;
         }
@@ -496,13 +588,45 @@
       return a.textLength - b.textLength;
     });
 
-    var selected = [];
-    for (var s = 0; s < scored.length && selected.length < maxCards * 2; s += 1) {
-      insertNonOverlapping(selected, scored[s]);
-    }
-
+    var hasLayout = pageHasLayout(doc);
+    var selected = selectNonOverlapping(scored, maxCards);
     var clusters = clusterBySignature(selected);
-    var main = pickMainCluster(clusters, pageHasLayout(doc));
+    var main = pickMainCluster(clusters, hasLayout);
+    // 整个列表的外框得分可能比每张卡片都高(卡片都是纯文字、没有图时),被当成"一张卡片",
+    // 里面的卡片全被挤掉,只剩旁边的小列表凑成一组。已经找到一组时也再试一次:
+    // 去掉"里面装着 3 个以上同样结构候选"的外框重新分组,整组面积更大才换过去
+    if (main && hasLayout) {
+      var noBoxes = dropWrappingBoxes(scored);
+      if (noBoxes.length < scored.length) {
+        var boxFreeSelected = selectNonOverlapping(noBoxes, maxCards);
+        var boxFreeClusters = clusterBySignature(boxFreeSelected);
+        var boxFreeMain = pickMainCluster(boxFreeClusters, hasLayout);
+        if (boxFreeMain && groupArea(boxFreeMain) > groupArea(main)) {
+          main = boxFreeMain;
+          clusters = boxFreeClusters;
+          selected = boxFreeSelected;
+        }
+      }
+    }
+    if (!main) {
+      // 正文的卡片外壳不一样(比如 2 个回答包在 List-item 里,1 个包在 AnswerCard 里),
+      // 但里面的内容结构一样:剥掉只包着一个元素的外壳,按里面的结构再分一次组
+      var coreGroups = clusterBySignature(coreCandidates(selected));
+      var coreMain = pickMainCluster(coreGroups, hasLayout);
+      // 卡片很少(十来张)时,整个列表的外框可能比单张卡片得分更高,把卡片全挤掉。
+      // 只在这时去掉"直接包着 3 个以上同样结构候选"的外框再选一次;能正常找到卡片的页面不受影响。
+      var withoutLists = dropListContainers(scored);
+      if (withoutLists.length < scored.length) {
+        selected = selectNonOverlapping(withoutLists, maxCards);
+        clusters = clusterBySignature(selected);
+        main = pickMainCluster(clusters, hasLayout);
+      }
+      // 两种都找到时,选整组占页面面积大的(正文的 3 个回答比旁边 10 条短链接列表大得多)
+      if (coreMain && (!main || (hasLayout && groupArea(coreMain) > groupArea(main)))) {
+        main = coreMain;
+        clusters = coreGroups;
+      }
+    }
     if (!main) return { roots: [], signature: "", clusterSizes: summarizeClusters(clusters) };
 
     var roots = main.candidates.map(function (c) { return c.element; });
@@ -510,6 +634,11 @@
     roots.sort(compareDomOrder);
     return {
       roots: roots.slice(0, maxCards),
+      // 卡片比上限多:只取了前 maxCards 张,调用方要告诉用户(不能悄悄少读)
+      truncated: roots.length > maxCards,
+      totalCards: roots.length,
+      // 只挑到 maxCards * 2 个候选就停了:真实张数可能更多,这时 totalCards 只是"至少"
+      totalExact: selected.length < maxCards * 2,
       signature: main.signature,
       clusterSizes: summarizeClusters(clusters)
     };
@@ -601,18 +730,75 @@
     return matches ? Math.min(matches.length, 8) : 0;
   }
 
-  function insertNonOverlapping(selected, candidate) {
-    for (var i = 0; i < selected.length; i += 1) {
-      var chosen = selected[i];
-      var overlaps = chosen.element === candidate.element ||
-        (chosen.element.contains && chosen.element.contains(candidate.element)) ||
-        (candidate.element.contains && candidate.element.contains(chosen.element));
-      if (overlaps) {
-        if (candidate.score > chosen.score) selected[i] = candidate;
-        return;
+  function cardsWithSignature(doc, signature, limits) {
+    var seeds = collectSeeds(doc, (limits && limits.maxSeeds) || MAX_SEEDS);
+    var matches = seeds.filter(function (element) { return sigOf(element) === signature && scoreCandidate(element); });
+    var roots = matches.filter(function (element) {
+      return !matches.some(function (other) { return other !== element && other.contains(element); });
+    });
+    roots.sort(compareDomOrder);
+    return roots.slice(0, (limits && limits.maxCards) || MAX_CARDS);
+  }
+
+  // 按得分从高到低挑互不包含的候选。scored 已按得分排好,先挑中的得分不会更低,
+  // 所以只需判断"是否和已挑中的重叠":自己或某个上层已被挑中,或自己是某个已挑中元素的上层。
+  // 用两个集合往上查,不再拿每个候选和所有已挑中的一一比较(卡片多时很慢)。
+  function selectNonOverlapping(scored, maxCards) {
+    var selected = [];
+    var chosen = new Set();
+    var chosenAncestors = new Set();
+    for (var s = 0; s < scored.length && selected.length < maxCards * 2; s += 1) {
+      var element = scored[s].element;
+      if (chosenAncestors.has(element)) continue;
+      var overlaps = false;
+      for (var node = element; node; node = node.parentElement) {
+        if (chosen.has(node)) { overlaps = true; break; }
+      }
+      if (overlaps) continue;
+      selected.push(scored[s]);
+      chosen.add(element);
+      for (var up = element.parentElement; up && !chosenAncestors.has(up); up = up.parentElement) chosenAncestors.add(up);
+    }
+    return selected;
+  }
+
+  // 和 dropListContainers 一样去掉列表外框,但不要求卡片是外框的直接子元素(中间可以隔着几层包装)
+  function dropWrappingBoxes(scored) {
+    var counts = new Map();
+    for (var i = 0; i < scored.length; i += 1) counts.set(scored[i].element, null);
+    var lists = new Set();
+    for (var j = 0; j < scored.length; j += 1) {
+      var key = sigOf(scored[j].element);
+      for (var up = scored[j].element.parentElement; up; up = up.parentElement) {
+        if (!counts.has(up)) continue;
+        var bySig = counts.get(up);
+        if (!bySig) { bySig = {}; counts.set(up, bySig); }
+        bySig[key] = (bySig[key] || 0) + 1;
+        if (bySig[key] >= MIN_CLUSTER_SIZE) lists.add(up);
       }
     }
-    selected.push(candidate);
+    if (!lists.size) return scored;
+    return scored.filter(function (c) { return !lists.has(c.element); });
+  }
+
+  function dropListContainers(scored) {
+    var scoredSet = new Set(scored.map(function (c) { return c.element; }));
+    var lists = new Set();
+    var counts = new Map();
+    for (var i = 0; i < scored.length; i += 1) {
+      var parent = scored[i].element.parentElement;
+      if (!parent || !scoredSet.has(parent)) continue;
+      var key = sigOf(scored[i].element);
+      var byParent = counts.get(parent);
+      if (!byParent) { byParent = {}; counts.set(parent, byParent); }
+      byParent[key] = (byParent[key] || 0) + 1;
+      if (byParent[key] >= MIN_CLUSTER_SIZE) lists.add(parent);
+    }
+    // 外框外面常常还包着几层(只装着这一个外框):这些外层同样会被当成"一张卡",一起去掉
+    var listEls = Array.from(lists);
+    return scored.filter(function (c) {
+      return !listEls.some(function (list) { return c.element === list || c.element.contains(list); });
+    });
   }
 
   // 有的网站把一张卡片拆成并排的两块:一块是图和标题,另一块是作者和数字。两块会各自被认成"卡片",
@@ -654,13 +840,42 @@
     return clusters;
   }
 
+  // 有几组都够 3 张时,选整组占页面面积最大的那组(张数 × 每张大小),不只看张数:
+  // 正文的卡片少而大,旁边的列表(排行、标签)多而小。没有页面布局(后台读取)时量不了面积,照旧按张数
   function pickMainCluster(clusters, checkDisplay) {
+    var best = null;
+    var bestArea = -1;
     for (var i = 0; i < clusters.length; i += 1) {
       if (clusters[i].candidates.length < MIN_CLUSTER_SIZE) continue;
       if (checkDisplay && mostlyHidden(clusters[i].candidates)) continue;
-      return clusters[i];
+      if (!checkDisplay) return clusters[i];
+      var area = groupArea(clusters[i]);
+      if (area > bestArea) { best = clusters[i]; bestArea = area; }
     }
-    return null;
+    return best;
+  }
+
+  function groupArea(cluster) {
+    var total = 0;
+    for (var i = 0; i < cluster.candidates.length; i += 1) {
+      var element = cluster.candidates[i].element;
+      var box = element.getBoundingClientRect ? element.getBoundingClientRect() : null;
+      if (box) total += box.width * box.height;
+    }
+    return total;
+  }
+
+  // 剥外壳:一层元素只包着一个子元素、自己没有别的文字时,往里走,取到真正的内容块
+  function coreCandidates(selected) {
+    return selected.map(function (candidate) {
+      var element = candidate.element;
+      for (var depth = 0; depth < 4; depth += 1) {
+        var only = element.children && element.children.length === 1 ? element.children[0] : null;
+        if (!only || normalizeText(only.textContent).length < normalizeText(element.textContent).length) break;
+        element = only;
+      }
+      return element === candidate.element ? candidate : Object.assign({}, candidate, { element: element });
+    });
   }
 
   function mostlyHidden(candidates) {
@@ -707,12 +922,11 @@
         collectAttrSlots(element, frame.path, slots);
       }
 
-      var child = element.lastElementChild;
       var childIndexes = {};
       var ordered = [];
       var forward = element.firstElementChild;
       while (forward) {
-        var sig = sigOf(forward);
+        var sig = pathSigOf(forward);
         var idx = childIndexes[sig] || 0;
         childIndexes[sig] = idx + 1;
         ordered.push({ node: forward, seg: sig + ":" + idx });
@@ -726,7 +940,6 @@
         }
         stack.push({ node: ordered[i].node, path: joinPath(frame.path, ordered[i].seg) });
       }
-      void child;
     }
     return slots;
   }
@@ -825,6 +1038,7 @@
       attrHints: normalizeText(parentParts.concat(prevParts).filter(Boolean).join(" ")).slice(0, 400),
       attrHintsNext: normalizeText(nextParts.filter(Boolean).join(" ")).slice(0, 200),
       prevSiblingText: prevSiblingText,
+      ownLabel: element.getAttribute ? normalizeText(element.getAttribute("aria-label") || element.getAttribute("title") || "") : "",
       iconEl: iconBefore || iconAfter
     };
   }
@@ -903,7 +1117,7 @@
     if (!element) return null;
     var tag = (element.tagName || "").toLowerCase();
     if (tag === "svg") {
-      var markup = svgMarkup(element, element.ownerDocument, 0);
+      var markup = svgMarkup(element, element.ownerDocument, 0, null, true);
       return markup && markup.length <= ICON_MARKUP_MAX && /<(path|circle|ellipse|rect|line|polyline|polygon)\b/.test(markup)
         ? { kind: "svg", markup: markup }
         : null;
@@ -929,23 +1143,51 @@
     return null;
   }
 
-  function svgMarkup(element, doc, depth) {
+  // 网站常用 CSS 给图标上色/去色,复制时 CSS 会丢:没写 fill/stroke 属性的图形,
+  // 按原页面上实际算出来的样式补上"不填色"或"描边",让线框图标在面板里仍是线框,不会变成实心一块。
+  // 返回 "none"、"paint",读不到时返回 ""(不补)。
+  function livePaint(element, prop) {
+    var view = element.ownerDocument && element.ownerDocument.defaultView;
+    if (!view || !view.getComputedStyle) return "";
+    var value = String((view.getComputedStyle(element) || {})[prop] || "").trim();
+    if (!value) return "";
+    return /^none$/i.test(value) ? "none" : "paint";
+  }
+
+  // inherited:复制品里父元素已有的 { fill, stroke } 状态("paint"/"none");live:能否读原页面样式
+  function svgMarkup(element, doc, depth, inherited, live) {
     if (depth > 12) return "";
+    inherited = inherited || { fill: "paint", stroke: "none" };
+    if (live === undefined) live = true;
     var tag = (element.tagName || "").toLowerCase();
-    if (tag === "use") return useMarkup(element, doc, depth);
+    if (tag === "use") return useMarkup(element, doc, depth, inherited, live);
     if (tag === "symbol") tag = "g";
     if (!SVG_TAGS.test(tag)) return "";
     var attrs = [];
+    var own = { fill: inherited.fill, stroke: inherited.stroke };
+    var hasAttr = {};
     var list = element.attributes || [];
     for (var i = 0; i < list.length; i += 1) {
       var name = String(list[i].name).toLowerCase();
       var value = String(list[i].value);
       if (tag === "svg" && (name === "x" || name === "y")) continue;
       if (name === "fill" || name === "stroke") {
-        attrs.push(name + '="' + (/^none$/i.test(value) ? "none" : "currentColor") + '"');
+        var none = /^none$/i.test(value);
+        attrs.push(name + '="' + (none ? "none" : "currentColor") + '"');
+        own[name] = none ? "none" : "paint";
+        hasAttr[name] = true;
       } else if (SVG_ATTRS.test(name) && /^[\w\s.,#%()\-]*$/.test(value)) {
         attrs.push((name === "viewbox" ? "viewBox" : name) + '="' + value + '"');
       }
+    }
+    if (live) {
+      ["fill", "stroke"].forEach(function (prop) {
+        if (hasAttr[prop]) return;
+        var paint = livePaint(element, prop);
+        if (!paint || paint === inherited[prop]) return;
+        attrs.push(prop + '="' + (paint === "none" ? "none" : "currentColor") + '"');
+        own[prop] = paint;
+      });
     }
     if (tag === "svg" && !/viewBox=/.test(attrs.join(" "))) {
       var w = Number(element.getAttribute("width"));
@@ -955,7 +1197,7 @@
     var inner = "";
     var child = element.firstElementChild;
     while (child) {
-      inner += svgMarkup(child, doc, depth + 1);
+      inner += svgMarkup(child, doc, depth + 1, own, live);
       child = child.nextElementSibling;
     }
     if (tag === "svg") return '<svg xmlns="http://www.w3.org/2000/svg"' + (attrs.length ? " " + attrs.join(" ") : "") + ">" + inner + "</svg>";
@@ -963,12 +1205,25 @@
   }
 
   // <use href="#icon-download"> 引用页面里的图标合集:把被引用的那个图形抄过来
-  function useMarkup(element, doc, depth) {
+  // 被引用的图形在图标合集里,原页面上算出的样式属于合集而不是这个图标,所以里面只认写明的属性;
+  // <use> 自己身上的去色/描边(属性或 CSS)包在外层 <g> 上传下去。
+  function useMarkup(element, doc, depth, inherited, live) {
     var ref = element.getAttribute("href") || element.getAttribute("xlink:href") || "";
     if (!/^#[\w\-:.]+$/.test(ref) || !doc || !doc.getElementById) return "";
     var target = doc.getElementById(ref.slice(1));
     if (!target) return "";
-    var markup = svgMarkup(target, doc, depth + 1);
+    inherited = inherited || { fill: "paint", stroke: "none" };
+    var own = { fill: inherited.fill, stroke: inherited.stroke };
+    var wrap = [];
+    ["fill", "stroke"].forEach(function (prop) {
+      var attr = element.getAttribute(prop);
+      var paint = attr ? (/^none$/i.test(attr) ? "none" : "paint") : live ? livePaint(element, prop) : "";
+      if (!paint || paint === inherited[prop]) return;
+      wrap.push(prop + '="' + (paint === "none" ? "none" : "currentColor") + '"');
+      own[prop] = paint;
+    });
+    var markup = svgMarkup(target, doc, depth + 1, own, false);
+    if (wrap.length) markup = "<g " + wrap.join(" ") + ">" + markup + "</g>";
     var box = target.getAttribute && target.getAttribute("viewBox");
     return box && (target.tagName || "").toLowerCase() === "symbol"
       ? '<svg viewBox="' + box.replace(/[^\d\s.,\-]/g, "") + '">' + markup + "</svg>"
@@ -1131,7 +1386,8 @@
 
   function gatherContext(element) {
     var parts = [];
-    var nodes = [element, element.previousElementSibling, element.parentElement];
+    // 不看父元素:父元素(常常就是整张卡片,如 class="AnswerItem")的名字说的是卡片,不是这个数字
+    var nodes = [element, element.previousElementSibling];
     for (var i = 0; i < nodes.length; i += 1) {
       var node = nodes[i];
       if (!node || !node.getAttribute) continue;
@@ -1156,7 +1412,9 @@
     var prevText = element.previousElementSibling ? normalizeText(element.previousElementSibling.textContent).slice(0, 40) : "";
     return {
       attrHints: normalizeText(parts.join(" ")).slice(0, 400),
-      prevSiblingText: prevText
+      prevSiblingText: prevText,
+      // 藏在代码里的数字(<meta itemprop="upvoteCount" content="108332">)自己的代码名;只在别的办法都叫不出名字时才用
+      ownCode: element.getAttribute ? normalizeText(element.getAttribute("itemprop") || "") : ""
     };
   }
 
@@ -1202,9 +1460,10 @@
       if (nonMeasureReason(piece, everything)) piece.excluded = true;
     });
     candidates = mergeSplitFields(candidates, minor);
+    candidates = mergeExactEcho(candidates);
     dedupeAttrEcho(candidates);
     borrowEchoNames(candidates);
-    candidates.forEach(function (candidate) { delete candidate._values; delete candidate._texts; });
+    candidates.forEach(function (candidate) { delete candidate._values; delete candidate._raws; delete candidate._texts; });
     candidates.sort(compareCandidates);
     return candidates;
   }
@@ -1216,10 +1475,12 @@
     var kept = [];
     for (var i = 0; i < candidates.length; i += 1) {
       var candidate = candidates[i];
-      if (candidate.excluded || !candidate._values) { kept.push(candidate); continue; }
+      // 藏在代码里、只靠自己的代码名认出的数字不在这里合并:它的名字不能盖掉网站写的字,
+      // 它的精确值要留着排序 → 交给 mergeExactEcho
+      if (candidate.excluded || !candidate._values || codeNamedHidden(candidate)) { kept.push(candidate); continue; }
       var twin = null;
       for (var k = 0; k < kept.length && !twin; k += 1) {
-        if (sameValues(kept[k], candidate)) twin = kept[k];
+        if (!codeNamedHidden(kept[k]) && sameValues(kept[k], candidate)) twin = kept[k];
       }
       if (!twin) { kept.push(candidate); continue; }
       var winner = mergeRank(candidate) > mergeRank(twin) ? candidate : twin;
@@ -1227,18 +1488,86 @@
       // 用词写出来的名字比按图标猜的名字可靠:"5.0 (3)" 旁边的星星图标猜成"收藏",
       // 同一个数在 "5.0 out of 5 average rating" 里写明了是评分 → 用写明的名字
       var wordsBeatIcon = winner.source === "icon" && loser.canonicalId && loser.source === "text-pair";
-      if ((!winner.canonicalId && loser.canonicalId) || (!winner.label && loser.label) || wordsBeatIcon) {
+      // 同一个数字写了两处、两处的字不同("5835 人赞同了该回答" 和按钮 "赞同 5835"):用字少的那处的名字
+      var winnerWords = normalizeText(winner.siteLabel);
+      var loserWords = normalizeText(loser.siteLabel);
+      var fewerWords = winner.kind === "text" && loser.kind === "text" && winnerWords && loserWords && loserWords.length < winnerWords.length && winner.source !== "icon" && loser.source !== "icon";
+      if ((!winner.canonicalId && loser.canonicalId) || (!winner.label && loser.label) || wordsBeatIcon || fewerWords) {
         winner.label = loser.label;
         winner.siteLabel = loser.siteLabel;
         winner.canonicalId = loser.canonicalId;
         winner.source = loser.source;
         winner.preChecked = winner.preChecked || loser.preChecked;
         winner.suspect = winner.suspect && loser.suspect;
-        if (winner.canonicalId && winner.source !== "icon") winner.icon = null;
+        if (fewerWords && loser.icon) winner.icon = loser.icon; // 名字和图标来自同一处
       }
       if (winner === candidate) kept[kept.indexOf(twin)] = candidate;
     }
     return kept;
+  }
+
+  // 卡片上写"10.8 万",代码里藏着精确的 108332(名字只能从它自己的代码名认出):是同一个数 → 菜单里只留一个,
+  // 用看得见的那个的名字、图标和编号,排序用藏着的精确数(sortFrom)。
+  // 找不到看得见的对应项 → 不进排序菜单(卡片上看不到的数用户没法核对;James 2026-11-19 选 A)。
+  // 两边都有数的卡片里至少六成对得上(精确数按看得见的写法取到那一位),并且至少 3 张卡、3 种不同的数。
+  // 有的卡片同一个位置藏的是别的数:对不上的那几张卡排序用看得见的数(见 extractItems),所以不要求张张都对上。
+  function codeNamedHidden(candidate) {
+    return candidate.kind === "attr" && candidate.source === "own-code";
+  }
+
+  function mergeExactEcho(candidates) {
+    var hidden = candidates.filter(function (c) {
+      return codeNamedHidden(c) && c.type === "number" && !c.excluded && c._values;
+    });
+    var gone = [];
+    hidden.forEach(function (exact) {
+      var best = null;
+      var bestShared = 0;
+      candidates.forEach(function (shown) {
+        if (shown === exact || gone.indexOf(shown) >= 0 || shown.kind !== "text" || shown.type !== "number" || shown.excluded || !shown._values || shown.sortFrom) return;
+        var shared = roundedTwinCount(exact, shown);
+        if (shared > bestShared) { best = shown; bestShared = shared; }
+      });
+      if (!best) {
+        exact.excluded = true;
+        exact.excludedWhy = "hidden";
+        exact.preChecked = false;
+        return;
+      }
+      best.sortFrom = slotSpecOf(exact);
+      gone.push(exact);
+    });
+    return candidates.filter(function (c) { return gone.indexOf(c) < 0; });
+  }
+
+  function roundedTwinCount(exact, shown) {
+    var matched = 0;
+    var missed = 0;
+    var distinct = {};
+    for (var key in exact._values) {
+      if (!(key in shown._values)) continue;
+      var x = exact._values[key];
+      var y = shown._values[key];
+      if (typeof x !== "number" || typeof y !== "number" || isNaN(x) || isNaN(y)) return 0;
+      if (!roundsTo(x, y, shown._raws && shown._raws[key])) { missed += 1; continue; }
+      matched += 1;
+      distinct[y] = true;
+    }
+    return matched >= 3 && matched >= (matched + missed) * 0.6 && Object.keys(distinct).length >= 3 ? matched : 0;
+  }
+
+  function roundsTo(exact, shown, raw) {
+    return Math.abs(exact - shown) < shownStep(shown, raw);
+  }
+
+  // 看得见的写法最后一位代表多少:"10.8 万" → 1000,"4569" → 1,"1.4K" → 100
+  function shownStep(value, raw) {
+    var match = /\d[\d,]*(?:\.(\d+))?/.exec(normalizeText(raw));
+    if (!match) return 1;
+    var written = parseFloat(match[0].replace(/,/g, ""));
+    if (!written) return 1;
+    var step = (value / written) * Math.pow(10, -(match[1] ? match[1].length : 0));
+    return Math.max(step, 1);
   }
 
   // 同一个数字因为前面多了或少了一个元素(比如有的卡片多一个分类标签)落在不同位置,被拆成了两个字段。
@@ -1262,7 +1591,10 @@
       var small = big === host ? candidate : host;
       big.altPaths = (big.altPaths || []).concat([slotSpecOf(small)], small.altPaths || []);
       for (var key in small._values) {
-        if (!(key in big._values)) big._values[key] = small._values[key];
+        if (!(key in big._values)) {
+          big._values[key] = small._values[key];
+          if (big._raws && small._raws) big._raws[key] = small._raws[key];
+        }
       }
       big.coverage = { count: Object.keys(big._values).length, total: big.coverage.total };
       big.examples = big.examples.concat(small.examples).slice(0, 3);
@@ -1273,8 +1605,8 @@
   }
 
   function splitMergeable(candidate) {
-    return !candidate.excluded && Boolean(candidate._values) && Boolean(candidate.canonicalId) &&
-      candidate.source !== "icon" && candidate.kind !== "attr";
+    return !candidate.excluded && Boolean(candidate._values) && Boolean(candidate.canonicalId || normalizeText(candidate.siteLabel)) &&
+      candidate.source !== "icon" && (candidate.kind !== "attr" || candidate.type === "date");
   }
 
   function splitPartners(a, b) {
@@ -1282,6 +1614,7 @@
     var left = normalizeText(a.siteLabel).toLowerCase();
     var right = normalizeText(b.siteLabel).toLowerCase();
     if (left && right && left !== right) return false;
+    if (!a.canonicalId && !(left && left === right)) return false;
     // 同一张卡片上两个位置都有数:必须是同一个数(只是写了两遍),不同就是两种数据("今日"和"总计")
     for (var key in b._values) {
       if (!(key in a._values)) continue;
@@ -1289,6 +1622,8 @@
       var y = typeof b._values[key] === "string" ? Date.parse(b._values[key]) : b._values[key];
       if (typeof x !== "number" || typeof y !== "number" || isNaN(x) || isNaN(y)) return false;
       if (Math.abs(x - y) > Math.max(Math.abs(x), Math.abs(y)) * 0.05) return false;
+      // 藏在网页信息里的日期(只有这类才新加了合并):要求同一天以内,5% 对日期太宽
+      if ((a.kind === "attr" || b.kind === "attr") && Math.abs(x - y) > 86400000) return false;
     }
     return true;
   }
@@ -1439,7 +1774,7 @@
   // "热度: 157 收藏: 3 留言: 0" 这类多指标同文本节点:
   // 按 "label: 数值" 对拆成虚拟 slot(path#label),每个 label 一个候选字段。
   // 值捕获包含时间/容量单位与"前/ago",这样 "Added: 15 d"、"添加时间: 1 小时 前" 能整体作为值
-  var PAIR_RE = /([一-龥A-Za-z][一-龥A-Za-z ]{0,13}?)\s*[:：]\s*((?:(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?![\d])|\d{1,3}(?:[ '’]\d{3})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*)\s*(?:万|萬|亿|億|bytes?\b|[kmgt]b\b|[kKmMbB]\b|days?\b|d\b|hours?\b|hrs?\b|h\b|minutes?\b|mins?\b|weeks?\b|wks?\b|w\b|months?\b|mos?\b|years?\b|yrs?\b|y\b|秒|分钟|分鐘|小时|小時|天|日|周|週|星期|个月|個月|月|年)?\s*(?:前|ago\b)?)/gi;
+  var PAIR_RE = /([一-龥A-Za-z][一-龥A-Za-z ]{0,13}?)\s*[:：]\s*((?:\d{1,3}:\d{2}(?::\d{2})?(?![\d:])|(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}(?![\d])|\d{1,3}(?:[ '’]\d{3})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*)\s*(?:百万|百萬|千万|千萬|千|万|萬|亿|億|bytes?\b|[kmgt]b\b|[kKmMbB]\b|days?\b|d\b|hours?\b|hrs?\b|h\b|minutes?\b|mins?\b|weeks?\b|wks?\b|w\b|months?\b|mos?\b|years?\b|yrs?\b|y\b|秒|分钟|分鐘|小时|小時|天|日|周|週|星期|个月|個月|月|年)?\s*(?:前|ago\b)?)/gi;
 
   function extractLabeledPairs(text) {
     var pairs = [];
@@ -1591,7 +1926,7 @@
       labelInfo = finishLabel(pairLabel, matchCanonical(pairLabel), "text-pair");
     } else {
       var split = splitLabelAndValue(texts, typing.type);
-      labelInfo = inferLabel(split.constantLabel, entries, path);
+      labelInfo = inferLabel(split.constantLabel, entries, path, typing.type);
     }
 
     // 从旁边图标猜的名字和值的类型对不上(日期被猜成"文件大小")→ 不用这个名字
@@ -1625,16 +1960,22 @@
 
     var id = makeCandidateId(labelInfo, typing.type, path, counter);
     var values = null;
+    var raws = null;
     if (isSortable) {
       values = {};
+      raws = {};
       for (var vi = 0; vi < entries.length; vi += 1) {
         if (entries[vi].cardIndex == null) continue;
         var parsed = parseByType(entries[vi].occurrence.text, typing.type);
-        if (parsed != null && !(typeof parsed === "number" && isNaN(parsed))) values[entries[vi].cardIndex] = parsed;
+        if (parsed != null && !(typeof parsed === "number" && isNaN(parsed))) {
+          values[entries[vi].cardIndex] = parsed;
+          raws[entries[vi].cardIndex] = entries[vi].occurrence.text;
+        }
       }
     }
     return {
       _values: values,
+      _raws: raws,
       _texts: texts,
       id: id,
       path: elementPath,
@@ -1655,7 +1996,7 @@
       suspect: suspect,
       preChecked: isSortable && !suspect && coverage >= COVERAGE_TRUST && Boolean(labelInfo.canonical),
       // 没名字(或名字是从图标线索猜的,可能因重名被撤掉)→ 记下卡片里的图标,面板用它来显示
-      icon: isSortable && kind === "text" && (!labelInfo.display || labelInfo.source === "icon") ? iconForEntries(entries) : null
+      icon: isSortable && kind === "text" ? iconForEntries(entries) : null
     };
   }
 
@@ -1765,7 +2106,7 @@
       .slice(0, 40);
   }
 
-  function inferLabel(constantLabel, entries, path) {
+  function inferLabel(constantLabel, entries, path, slotType) {
     // 1) slot 内恒定文本
     if (constantLabel) {
       var canonical = matchCanonical(constantLabel);
@@ -1799,13 +2140,32 @@
       }
     }
 
+    // 3.5) 数字所在元素自己写的名字(按钮的 aria-label / title):网站写明的名字比按图标猜的可靠
+    var ownCounts = {};
+    for (var oe = 0; slotType !== "text" && oe < entries.length; oe += 1) {
+      // 提示文字里本身带着数字("15.3k users")时,已有的"隐藏提示文字"规则会处理,这里只认纯名字("收藏")
+      var ownText = entries[oe].occurrence.context.ownLabel || "";
+      if (/\d/.test(ownText)) continue;
+      var ownRaw = extractLabelPart(ownText, "number");
+      if (ownRaw && ownRaw.length <= 20 && !looksLikeNumber(ownRaw)) ownCounts[ownRaw] = (ownCounts[ownRaw] || 0) + 1;
+    }
+    for (var ownKey in ownCounts) {
+      if (ownCounts[ownKey] / entries.length >= 0.6) {
+        var ownCanonical = matchCanonical(ownKey);
+        var ownInfo = finishLabel(ownKey, ownCanonical, "own-label");
+        // 写的就是标准英文名("likes"):显示和以前一样用标准写法
+        return ownInfo;
+      }
+    }
+
     // 4) icon / attr 语义:先用前置图标(👍 182 中 182 属于前面的 👍),没有再看后置
     for (var pass = 0; pass < 2; pass += 1) {
       var hintCounts = {};
       for (var e = 0; e < entries.length; e += 1) {
         var context = entries[e].occurrence.context;
         var haystack = pass === 0 ? context.attrHints : context.attrHintsNext;
-        var hint = matchIconHint(haystack);
+        // 文字类字段(标题、作者)不参与排序,名字照旧规则,免得"不能排序"列表里的名字变来变去
+        var hint = slotType === "text" ? matchIconHint(haystack) : matchCodeWords(haystack);
         if (!hint) continue;
         var hintKey = hint.vocab.id + "|" + hint.word;
         if (!hintCounts[hintKey]) hintCounts[hintKey] = { hint: hint, n: 0 };
@@ -1814,8 +2174,27 @@
       for (var hintKey2 in hintCounts) {
         if (hintCounts[hintKey2].n / entries.length >= 0.6) {
           var won = hintCounts[hintKey2].hint;
-          if (won.word) return { siteLabel: won.word, display: won.word, canonical: won.vocab, source: "icon" };
-          return finishLabel("", won.vocab, "icon");
+          if (won.raw || (slotType === "text" && won.word)) return { siteLabel: won.word, display: won.word, canonical: won.vocab, source: "icon" };
+          var codeInfo = finishLabel("", won.vocab, "icon");
+          if (slotType === "text") return codeInfo;
+          codeInfo.display = /[一-龥]/.test(won.word) ? won.vocab.zh : pageName(won.vocab); // 代码里的词是英文,名字用网页的语言
+          return codeInfo;
+        }
+      }
+    }
+
+    // 5) 藏在代码里的数字,前面都叫不出名字:看它自己的代码名(itemprop="upvoteCount" → upvote → 点赞)
+    if (slotType === "number" && atIndex >= 0) {
+      var codeCounts = {};
+      for (var ce = 0; ce < entries.length; ce += 1) {
+        var codeHint = matchCodeWords(entries[ce].occurrence.context.ownCode || "");
+        if (codeHint) codeCounts[codeHint.vocab.id] = { hint: codeHint, n: ((codeCounts[codeHint.vocab.id] || {}).n || 0) + 1 };
+      }
+      for (var codeKey in codeCounts) {
+        if (codeCounts[codeKey].n / entries.length >= 0.6) {
+          var codeLabel = finishLabel("", codeCounts[codeKey].hint.vocab, "own-code");
+          codeLabel.display = pageName(codeCounts[codeKey].hint.vocab);
+          return codeLabel;
         }
       }
     }
@@ -1838,10 +2217,16 @@
   function finishLabel(siteLabel, canonical, source) {
     var clean = tidyLabel(siteLabel).replace(/[:：]+$/, "");
     if (canonical && canonical.id === "price") clean = normalizeText(clean.replace(new RegExp(CURRENCY_RE.source, "gi"), " ")).replace(/[:：]+$/, "");
+    // 名字用网站自己的语言,不翻译:中文网站的词查到词典 → 词典的中文名;英文的 → 词典的英文名;
+    // 查不到 → 网站原词。网站上没有字(只按数值类型认出,如日期)→ 网页语言的标准名
+    if (!/[A-Za-z\u4e00-\u9fa5]/.test(clean)) clean = ""; // "|"、"· ·" 这类符号不是名字
     var display;
-    if (canonical && clean && !canonical.re.test(clean)) display = clean + " · " + canonical.zh + " " + canonical.en;
-    else if (canonical && clean) display = /[一-龥]/.test(clean) ? clean + " " + canonical.en : canonical.zh + " " + clean;
-    else if (canonical) display = canonical.zh + " " + canonical.en;
+    var wordMatches = canonical && clean && (canonical.re.test(clean) || canonical.re.test(spellingVariant(clean)));
+    if (wordMatches) display = /[一-龥]/.test(clean) ? canonical.zh : canonical.en;
+    // 名字不是词典里的词,意思是按数值类型认出来的(日期、时长、价格):用网页语言的标准名;其余照网站原词
+    else if (canonical && clean && (canonical.id === "uploadDate" || canonical.id === "durationSeconds" || canonical.id === "price")) display = pageName(canonical);
+    else if (clean) display = clean;
+    else if (canonical) display = pageName(canonical);
     else display = clean;
     return { siteLabel: clean, display: display, canonical: canonical, source: source };
   }
@@ -1882,6 +2267,8 @@
         var right = candidates[j];
         if (!right || right.excluded || right.canonicalId !== left.canonicalId) continue;
         if (right.type !== left.type) continue;
+        // 网站给两个数写了不同的名字(如"收藏"和"喜欢"),就是两种数据,不是同一个数写了两遍
+        if (left.siteLabel && right.siteLabel && normalizeText(left.siteLabel).toLowerCase() !== normalizeText(right.siteLabel).toLowerCase()) continue;
         var loser = left.coverage.count >= right.coverage.count ? right : left;
         loser.shadowed = true;
       }
@@ -1970,6 +2357,15 @@
           value = raw ? parseByType(raw, def.type, now) : null;
           if (typeof value === "number" && isNaN(value)) value = null;
         }
+        if (def.sortFrom) {
+          var exactRaw = readSlotText(card, def.sortFrom);
+          var exact = exactRaw ? parseByType(exactRaw, def.type, now) : null;
+          // 看得见的数和精确数对不上(这张卡的代码里藏的是别的数)→ 照看得见的排
+          if (typeof exact === "number" && !isNaN(exact) && (value == null || roundsTo(exact, value, raw))) {
+            if (value == null) raw = exactRaw;
+            value = exact;
+          }
+        }
         if (value == null) continue;
         metrics[def.id] = value;
         metricRaw[def.id] = raw;
@@ -1989,8 +2385,7 @@
         discoveryOrder: i,
         rawText: normalizeText(card.textContent).slice(0, 400),
         metrics: metrics,
-        metricRaw: metricRaw,
-        _dbg: identity.dbg
+        metricRaw: metricRaw
       });
     }
     return items;
@@ -2134,7 +2529,6 @@
 
   function extractIdentity(card, pageUrl) {
     var cfg = identityRules();
-    if (!cfg.link) return extractIdentityOld(card, pageUrl);
     var title = "";
     var url = "";
     var headings = strongTitles(card);
@@ -2260,42 +2654,6 @@
     return false;
   }
 
-  function extractIdentityOld(card, pageUrl) {
-    var title = "";
-    var url = "";
-    var thumbnail = "";
-
-    var titleEl = card.querySelector("h1,h2,h3,h4,h5,[class*='title' i],[class*='name' i],[itemprop='name']");
-    if (titleEl) title = normalizeText(titleEl.textContent);
-
-    var anchors = card.querySelectorAll("a[href]");
-    var ownLink = ownCardLink(card);
-    var bestAnchor = ownLink;
-    var bestScore = -1;
-    for (var i = 0; i < anchors.length && !ownLink; i += 1) {
-      var href = anchors[i].getAttribute("href") || "";
-      if (!href || href.charAt(0) === "#" || /^javascript:/i.test(href)) continue;
-      var text = normalizeText(anchors[i].textContent || anchors[i].getAttribute("title") || "");
-      var score = 0;
-      if (anchors[i].querySelector("img,picture,video")) score += 2;
-      if (text.length >= 6 && text.length <= 240) score += 3;
-      if (titleEl && (anchors[i].contains(titleEl) || titleEl.contains(anchors[i]))) score += 4;
-      if (score > bestScore) { bestScore = score; bestAnchor = anchors[i]; }
-    }
-    if (bestAnchor) {
-      url = absoluteUrl(bestAnchor.getAttribute("href"), pageUrl);
-      if (!title) title = normalizeText(bestAnchor.textContent || bestAnchor.getAttribute("title") || "");
-    }
-    if (!title) {
-      var img = card.querySelector("img[alt]");
-      if (img) title = normalizeText(img.getAttribute("alt"));
-    }
-    if (!title) title = normalizeText(card.textContent).slice(0, 80);
-
-    thumbnail = pickThumbnail(card, pageUrl);
-    return { title: title, url: url, thumbnail: thumbnail };
-  }
-
   // 懒加载图片在没滚到、或后台读取(不跑网站脚本)时,src 只是一张共用的占位图,
   // 真图地址在 data-src 这类属性里,所以先看这些属性。
   var LAZY_IMAGE_ATTRS = ["data-src", "data-original", "data-lazy-src", "data-lazy", "data-url", "data-thumb"];
@@ -2413,7 +2771,7 @@
   // 发现模式:找 card → 对齐 → 候选字段 + 全量提取(含所有候选,便于 UI 展示示例)
   function discover(doc, options) {
     var opts = options || {};
-    var found = findCards(doc);
+    var found = findCards(doc, opts.limits);
     if (!found.roots.length) {
       return { ok: false, reason: "no-cards", cardCount: 0, candidates: [], items: [], signature: "", clusterSizes: found.clusterSizes };
     }
@@ -2422,6 +2780,7 @@
     for (var i = 0; i < found.roots.length; i += 1) {
       cardSlotList.push(collectCardSlots(found.roots[i]));
     }
+    PAGE_ZH = detectPageZh(doc, found.roots);
     var candidates = alignSlots(cardSlotList);
     var sortable = candidates.filter(function (c) { return !c.excluded; });
     var items = extractItems(doc, found.roots, sortable, opts);
@@ -2430,6 +2789,9 @@
       ok: true,
       engineVersion: ENGINE_VERSION,
       cardCount: found.roots.length,
+      truncated: Boolean(found.truncated),
+      totalCards: found.totalCards || found.roots.length,
+      totalExact: found.totalExact !== false,
       signature: found.signature,
       clusterSizes: found.clusterSizes,
       candidates: candidates,
@@ -2442,6 +2804,10 @@
     var opts = options || {};
     var found = findCards(doc, opts.limits);
     var roots = found.roots;
+    if (!roots.length && rule && rule.cardSignature) {
+      // 列表最后一页常只剩一两张卡,凑不成"一组";已经知道卡片长什么样时,按已知的卡片结构直接找
+      roots = cardsWithSignature(doc, rule.cardSignature, opts.limits);
+    }
     if (rule && rule.cardSignature && found.signature && found.signature !== rule.cardSignature) {
       // 主簇签名与规则不符 → 规则可能失效,仍尝试提取但降置信
       opts.signatureMismatch = true;
@@ -2472,6 +2838,9 @@
       ok: true,
       engineVersion: ENGINE_VERSION,
       cardCount: roots.length,
+      truncated: Boolean(found.truncated),
+      totalCards: found.truncated ? found.totalCards : roots.length,
+      totalExact: !found.truncated || found.totalExact !== false,
       signature: found.signature,
       items: items,
       fieldCoverage: fieldCoverage,
@@ -2567,7 +2936,7 @@
       return { ok: false, reason: "not-sortable-type", sample: texts.slice(0, 3) };
     }
     var split = splitLabelAndValue(texts, typing.type);
-    var labelInfo = inferLabel(split.constantLabel, entries, path);
+    var labelInfo = inferLabel(split.constantLabel, entries, path, typing.type);
     if (!labelInfo.canonical) {
       if (typing.type === "date") labelInfo = defaultCanonicalLabel(labelInfo, "uploadDate");
       else if (typing.type === "duration") labelInfo = defaultCanonicalLabel(labelInfo, "durationSeconds");
@@ -2589,7 +2958,7 @@
         labelInfo: labelInfo,
         values: texts,
         total: total,
-        icon: !labelInfo.display || labelInfo.source === "icon" ? iconForEntries(entries) : null
+        icon: iconForEntries(entries)
       })]
     };
   }

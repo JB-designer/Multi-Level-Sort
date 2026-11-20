@@ -37,11 +37,13 @@ Sites with numbered page links work best for reading across multiple pages. Supp
 
 Selecting a page range sets what the extension attempts to read. A website’s structure or access restrictions may prevent some pages from being collected.
 
+YouTube and Reddit pages are not supported yet.
+
 ## Installation
 
 ### Chrome Web Store
 
-To be added.
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/apjnpmlplniekeacofpapeefcnaaeana).
 
 ### Install from source
 
@@ -80,6 +82,8 @@ Data export is not currently supported.
 ## Report a problem
 
 Found a problem? Report it on [GitHub Issues](https://github.com/JB-designer/Multi-Level-Sort/issues).
+
+Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
@@ -126,6 +130,8 @@ Source code is licensed under MIT. See [`LICENSE`](LICENSE) for details.
 
 你选择的页面范围，是扩展尝试读取的范围。网站结构或访问限制可能导致部分页面无法读取。
 
+暂不支持 YouTube 和 Reddit 页面。
+
 ## 安装
 
 ### Chrome 应用商店
@@ -169,6 +175,8 @@ Source code is licensed under MIT. See [`LICENSE`](LICENSE) for details.
 ## 反馈问题
 
 发现问题？欢迎通过 [GitHub Issues](https://github.com/JB-designer/Multi-Level-Sort/issues) 反馈。
+
+更新记录：[CHANGELOG.md](CHANGELOG.md)
 
 ## 许可证
 

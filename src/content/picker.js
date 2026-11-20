@@ -17,28 +17,14 @@
   var tipBox = null;
   var cardBoxes = [];
 
-  // 文案跟随 Chrome 语言(和 src/core/i18n.js 同一套;测试包可固定 FORCED_LANG)
-  var FORCED_LANG = null;
-  var IS_ZH = (FORCED_LANG || (/^zh/i.test((chrome.i18n && chrome.i18n.getUILanguage()) || "zh") ? "zh" : "en")) === "zh";
-  var TEXT = IS_ZH ? {
-    tip: "点击要排序的数字或日期，按 Esc 退出。",
-    text: "这是文字。请点击数字本身，如“点赞：4”中的 4。",
-    outside: "不在卡片内。请点击卡片里的数字。",
-    noNumber: "这里没有数字，请直接点击数字。",
-    missed: "未点中，请重试。"
-  } : {
-    tip: "Click a number or date to sort by. Esc to exit.",
-    text: "That's text. Click the number itself, like 4 in \"Likes: 4\".",
-    outside: "Outside the cards. Click a number in a card.",
-    noNumber: "No number here. Click right on the digits.",
-    missed: "Missed. Try again."
-  };
-  var TIP_DEFAULT = TEXT.tip;
+  // 文案由面板传入(src/core/i18n.js 里的 pickTip / pickText …),这里不再另写一份
+  var TEXT = {};
 
   function start(handlers) {
     if (active) return;
     active = true;
     callbacks = handlers || {};
+    TEXT = callbacks.texts || {};
     buildOverlay();
     highlightCards();
     document.addEventListener("mousemove", onMove, true);
@@ -69,7 +55,7 @@
 
     tipBox = document.createElement("div");
     tipBox.style.cssText = "position:fixed;z-index:2147483645;pointer-events:none;background:#1f2430;color:#fff;font:13px/1.5 system-ui,sans-serif;padding:8px 12px;border-radius:8px;max-width:360px;box-shadow:0 4px 14px rgba(0,0,0,.35);";
-    tipBox.textContent = TIP_DEFAULT;
+    tipBox.textContent = TEXT.tip;
     tipBox.style.display = "none";
     tipBox.style.left = "16px";
     tipBox.style.top = "16px";
@@ -181,7 +167,7 @@
     tipBox.style.background = "#8c2f2f";
     setTimeout(function () {
       if (!tipBox) return;
-      tipBox.textContent = TIP_DEFAULT;
+      tipBox.textContent = TEXT.tip;
       tipBox.style.display = "none";
       tipBox.style.background = "#1f2430";
     }, 2600);

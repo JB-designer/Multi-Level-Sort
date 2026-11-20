@@ -37,8 +37,11 @@
     collecting: false,
     collectCancelled: false,
     collectProgress: "",
+    manyCards: null,        // 当前页卡片超过默认上限时的总张数(用户还没同意全部读取)
+    allCards: false,        // 用户已同意「全部读取」
     tabBatch: null,          // 后台翻页批次的 promise 挂点
     pageTemplates: [],       // 翻页网址模板候选(逐一验证)
+    followLinks: null,       // 逐个点链接翻页的网站:这一页上已经学到的各页链接
     templateIndex: 0,
     pageDelayMs: 400,        // 两页之间的间隔;网站限速时自动放慢
     slowedDown: false,
@@ -49,6 +52,7 @@
     lastRequested: null,     // 最近一次要读的页码范围 { from, to, readToEnd }
     flashRuleIndex: -1,      // 下拉框互换规则后,需要短暂高亮的那一行
     menuIndex: -1,           // 打开着数字菜单的规则序号
+    notSortableOpen: false,  // 数字菜单里"不可排序项"是否展开(只在当前页面记住)
     lastResultId: null,      // 最近一次排序的结果缓存 id;有值且无任何改动时,前 5 名下面显示「打开完整结果」
     setupFolded: false,      // 排好后设置区收成一行摘要,点「修改」展开
     readTab: "pages",        // 读取范围的两个标签:"pages" 按页数 / "cards" 按卡片数(没有页码时默认按卡片数)
@@ -59,21 +63,38 @@
     anchor: null             // 面板/胶囊的位置(src/core/panel-position.js),拖动松手时保存
   };
 
-  var PAGE_CAP = 100; // 一次最多读 100 页
   var SORT_PRIORITY = ["downloads", "favorites", "likes", "views", "heat", "comments", "endorsements", "score", "dislikes", "fileSize", "price"];
 
   /* ================= 入口与初始化 ================= */
 
+  var opening = null; // 面板正在第一次打开(加载模块、读设置);这时再点图标不能再建一个面板
+
   async function toggle() {
+    if (opening) return opening;
     if (host) {
       host.style.display = host.style.display === "none" ? "" : "none";
       if (host.style.display === "") applyPosition();
+      else {
+        // 面板藏起来了:「点选数字」和弹窗也一起结束,不能留着拦住页面
+        if (state.picking) stopPicking();
+        dismissModal();
+      }
       return;
     }
+    opening = openPanel();
+    try {
+      await opening;
+    } finally {
+      opening = null;
+    }
+  }
+
+  async function openPanel() {
     await loadCore();
     state.ruleKey = core.rules.makeRuleKey(location.href);
     // 同一个网址(只是页码不同)记住拖到的位置;新页面从默认的右上角开始
-    state.anchor = (await core.position.loadAnchor(state.ruleKey)) || core.position.defaultAnchor();
+    state.anchor = (await core.position.loadAnchor(state.ruleKey)) ||
+      (await core.position.loadAnchor(core.rules.legacyRuleKey(location.href))) || core.position.defaultAnchor();
     state.theme = await core.theme.load();
     buildPanel();
     renderThemeButton();
@@ -94,7 +115,6 @@
       pageRange: await import(url("src/core/page-range.js")),
       pageLinks: await import(url("src/core/page-links.js")),
       resultView: await import(url("src/core/result-view.js")),
-      generic: await import(url("src/core/generic-adapter.js")),
       scrollReader: await import(url("src/core/scroll-reader.js")),
       i18n: await import(url("src/core/i18n.js")),
       position: await import(url("src/core/panel-position.js")),
@@ -163,14 +183,16 @@
     setScope(t("scanning"));
 
     if (state.rule) {
-      var applied = engine.applyRule(document, state.rule, { pageUrl: location.href, page: page });
+      var applied = engine.applyRule(document, state.rule, { pageUrl: location.href, page: page, limits: currentPageLimits() });
       if (applied.ok && applied.healthy && !applied.signatureMismatch) {
         state.cardCount = applied.cardCount;
+        state.manyCards = manyCardsOf(applied);
         state.cardSignature = applied.signature || state.rule.cardSignature;
         state.rule.slots.forEach(function (slot) {
-          if (slot.label || slot.siteLabel || slot.icon || slot.excluded) return;
+          if (slot.icon || slot.excluded) return;
           try { slot.icon = engine.iconForSlot(document, slot); } catch (e) { slot.icon = null; }
         });
+        refreshSavedNames(state.rule.slots);
         state.candidates = state.rule.slots.map(function (slot) {
           return Object.assign({}, slot, {
             coverage: applied.fieldCoverage[slot.id] || { count: 0, total: applied.cardCount },
@@ -188,7 +210,7 @@
       addNote({ id: "redesign", tone: "warn", title: t("layoutTitle"), body: t("layoutBody"), actions: [{ id: "dismiss", label: t("gotIt") }] });
     }
 
-    var discovered = engine.discover(document, { pageUrl: location.href, page: page });
+    var discovered = engine.discover(document, { pageUrl: location.href, page: page, limits: currentPageLimits() });
     if (!discovered.ok) {
       state.cardCount = 0;
       state.candidates = [];
@@ -197,6 +219,7 @@
       return;
     }
     state.cardCount = discovered.cardCount;
+    state.manyCards = manyCardsOf(discovered);
     state.cardSignature = discovered.signature;
     mergeCandidates(discovered.candidates);
     storePage(page, discovered.items);
@@ -340,21 +363,24 @@
     state.pagesData.set(page, stamped);
   }
 
-  function pool() {
+  // bounds = { startPage, endPage }:只取这几页。先按页数范围取,再合并重复,
+  // 否则范围外的那一份会把范围内的同一张卡片"合并"掉,结果里就少了这张卡片
+  function pool(bounds) {
     var all = [];
     var pages = Array.from(state.pagesData.keys()).sort(function (a, b) { return a - b; });
     pages.forEach(function (page) {
+      if (bounds && (page < bounds.startPage || page > bounds.endPage)) return;
       state.pagesData.get(page).forEach(function (item) { all.push(item); });
     });
     return all;
   }
 
   // 展示池:同链接同标题的完全重复只留第一张(跨页置顶/推荐位造成),合并数记账
-  function displayPool() {
+  function displayPool(bounds) {
     var seen = {};
     var merged = [];
     var duplicates = 0;
-    pool().forEach(function (item) {
+    pool(bounds).forEach(function (item) {
       var key = cardKey(item);
       if (seen[key]) { duplicates += 1; return; }
       seen[key] = true;
@@ -403,6 +429,23 @@
 
   /* ================= 字段与排序规则 ================= */
 
+  // 以前保存的设置里存着当时起的名字:按现在的起名规则重新起一次,只换名字和图标,
+  // 字段编号、排序规则都不动。按位置对上同一个字段,对不上的保持原样
+  function refreshSavedNames(slots) {
+    var fresh;
+    try { fresh = engine.discover(document, { pageUrl: location.href }); } catch (e) { return; }
+    if (!fresh || !fresh.ok) return;
+    var byPlace = {};
+    fresh.candidates.forEach(function (c) { byPlace[[c.path, c.textIndex, c.kind, c.attr || ""].join("|")] = c; });
+    slots.forEach(function (slot) {
+      var match = byPlace[[slot.path, slot.textIndex, slot.kind, slot.attr || ""].join("|")];
+      if (!match || slot.excluded) return;
+      slot.label = match.label;
+      slot.siteLabel = match.siteLabel;
+      if (match.icon) slot.icon = match.icon;
+    });
+  }
+
   function sortableCandidates() {
     return state.candidates.filter(function (c) { return !c.excluded && c.type !== "text"; });
   }
@@ -413,7 +456,7 @@
 
   function fieldCatalog() {
     var items = displayPool();
-    return sortableCandidates().map(function (slot) {
+    var catalog = sortableCandidates().map(function (slot) {
       var count = 0;
       var example = null;
       items.forEach(function (item) {
@@ -426,7 +469,7 @@
       var field = {
         id: slot.id,
         label: named ? core.resultView.fieldName({ label: named }) : "",
-        icon: named ? null : slot.icon || null,
+        icon: slot.icon || null,
         type: slot.type,
         count: count,
         total: items.length,
@@ -438,6 +481,10 @@
       field.exampleValue = shown && shown !== "—" ? shown : "";
       return field;
     });
+    // 叫不出名字的数字有好几个时,按顺序编号("第 1 个数字"),只有一个就叫"数字"
+    var unnamed = catalog.filter(function (f) { return !f.label; });
+    if (unnamed.length > 1) unnamed.forEach(function (f, i) { f.ordinal = i + 1; });
+    return catalog;
   }
 
   function resetDefaultSortRule() {
@@ -471,27 +518,36 @@
     return view.thisOn ? "current" : "pages";
   }
 
-  function rangeConfig() {
+  // 这次排序包括的页
+  function pageBounds() {
     var mode = rangeMode();
     var range = state.pageRange;
+    return {
+      startPage: mode === "current" || mode === "cards" ? state.currentPage : range.start,
+      endPage: mode === "current" ? state.currentPage
+        : mode === "cards" ? (state.noPaging ? state.currentPage : (state.cardsLastPage || state.currentPage))
+        : range.end
+    };
+  }
+
+  function rangeConfig() {
+    var bounds = pageBounds();
     return {
       sourceUrl: location.href,
       scopeFilters: { date: false, page: true, all: false },
       startDate: "",
       endDate: "",
-      startPage: mode === "current" || mode === "cards" ? state.currentPage : range.start,
-      endPage: mode === "current" ? state.currentPage
-        : mode === "cards" ? (state.noPaging ? state.currentPage : (state.cardsLastPage || state.currentPage))
-        : range.end,
+      startPage: bounds.startPage,
+      endPage: bounds.endPage,
       fieldCatalog: fieldCatalog(),
       poolSize: pool().length
     };
   }
 
-  // 分档根据所有已读的卡片计算,每读一页、每次排序都重算
+  // 分档根据这次范围内已读的卡片计算,每读一页、每次排序都重算
   function refreshBands(config) {
     var cfg = config || rangeConfig();
-    var scoped = core.sort.applyFiltersAndSort(displayPool(), [], cfg);
+    var scoped = core.sort.applyFiltersAndSort(displayPool(cfg), [], cfg);
     state.bucketState = core.buckets.buildBucketState(scoped, cfg.fieldCatalog, cfg);
     return cfg;
   }
@@ -499,7 +555,7 @@
   function sortedItems() {
     var cfg = refreshBands();
     cfg.bucketState = state.bucketState;
-    return core.sort.applyFiltersAndSort(displayPool(), state.sortRules, cfg);
+    return core.sort.applyFiltersAndSort(displayPool(cfg), state.sortRules, cfg);
   }
 
   /* ================= 主流程:排序(先收齐,再排,再展示) ================= */
@@ -536,7 +592,16 @@
   }
 
   async function runSort() {
-    if (state.collecting) return;
+    if (state.collecting || runSort.busy) return;
+    runSort.busy = true; // 从点下去到真正开始读取之间还有一步保存;这时再点一次不能再开一轮
+    try {
+      return await runSortInner();
+    } finally {
+      runSort.busy = false;
+    }
+  }
+
+  async function runSortInner() {
     // 上次排序后没有任何改动 → 直接重开缓存的结果页,不重新收集
     if (state.lastResultId) {
       reopenResults();
@@ -546,10 +611,15 @@
       addNote({ id: "nofield", tone: "warn", title: t("noFieldTitle"), body: t("noFieldBody"), actions: [{ id: "dismiss", label: t("gotIt") }] });
       return;
     }
+    var mode = rangeMode();
+    // 当前页卡片很多:先问用户要不要全部读取(读完会比较久)
+    if (mode !== "cards" && state.manyCards && !state.allCards) {
+      askReadAll(state.manyCards);
+      return;
+    }
     clearRunNotes();
     state.lastCollectNote = null;
     state.lastRequested = null;
-    var mode = rangeMode();
 
     if (mode === "pages") {
       var view = core.pageRange.describePageRange(state.pageRange);
@@ -596,7 +666,14 @@
     state.templateIndex = 0;
     // 学不出网址写法(网址里只有编码)时:不自己拼网址,点写着下一个数字的链接
     var follow = core.pagination.chooseFollowLinks(links, location.href, page);
-    if (follow) state.pageTemplates = [core.pagination.makeFollowLinksTemplate(follow)];
+    if (follow) {
+      var learned = state.followLinks && state.followLinks.page === page && state.followLinks.url === location.href ? state.followLinks.known : null;
+      var template = core.pagination.makeFollowLinksTemplate(follow);
+      if (learned) learned.forEach(function (href, n) { if (!template.known.has(n)) template.known.set(n, href); });
+      state.pageTemplates = [template];
+      // 同一页上之前几次读取学到的页链接留着,重试跳过的页、把范围往后加时还能找到
+      state.followLinks = { page: page, url: location.href, known: template.known };
+    }
   }
 
   function urlFor(page) {
@@ -613,15 +690,6 @@
   function learnPageLinks(anchors, page) {
     var template = state.pageTemplates[state.templateIndex];
     if (template && template.follow && anchors) template.learn(core.pageLinks.selectPageLinks(anchors, location.href, page), location.href, page);
-  }
-
-  // 第 1 页的规范网址(用户可能正停在第 N 页,二分探测必须从第 1 页起算)
-  function pageOneUrl() {
-    try {
-      return urlFor(1);
-    } catch (e) {
-      return location.href;
-    }
   }
 
   function advanceTemplate() {
@@ -643,23 +711,43 @@
   }
 
   // 新收的页和已有某页内容雷同 → 翻页网址没生效,返回撞上的页码
+  // 置顶帖之类每页都有的卡片不参与比较:否则一页很短的最后一页(比如 5 张里 4 张是置顶)会被误认成重复页,
+  // 那张真正的新卡片就读不进来。"每页都有" = 已读的页里至少两页都出现过。
   function looksLikeExistingPage(items) {
     if (!items || !items.length) return null;
-    var identities = pageIdentities(items);
-    var titled = titledSignatures(items);
     var pages = Array.from(state.pagesData.keys());
+    var pinned = pinnedCards(pages);
+    var identities = withoutPinned(pageIdentities(items), pinned.identities);
+    var titled = withoutPinned(titledSignatures(items), pinned.titled);
     for (var i = 0; i < pages.length; i += 1) {
       var stored = state.pagesData.get(pages[i]);
-      if (core.pagination.pagesLookIdentical(identities, storedIdentities(stored)) ||
-          core.pagination.pagesLookIdentical(titled, titledSignatures(stored))) {
+      if (core.pagination.pagesLookIdentical(identities, withoutPinned(storedIdentities(stored), pinned.identities)) ||
+          core.pagination.pagesLookIdentical(titled, withoutPinned(titledSignatures(stored), pinned.titled))) {
         return pages[i];
       }
     }
     return null;
   }
 
-  function paginationFailedText(page, dupPage) {
-    return t("cantTurnPages", { tries: state.pageTemplates.length, page: page, dup: dupPage });
+  function pinnedCards(pages) {
+    var seenIds = {};
+    var seenTitled = {};
+    var pinned = { identities: {}, titled: {} };
+    pages.forEach(function (page) {
+      var stored = state.pagesData.get(page);
+      var ids = {};
+      var titled = {};
+      storedIdentities(stored).forEach(function (sig) { ids[sig] = true; });
+      titledSignatures(stored).forEach(function (sig) { titled[sig] = true; });
+      Object.keys(ids).forEach(function (sig) { if (seenIds[sig]) pinned.identities[sig] = true; seenIds[sig] = true; });
+      Object.keys(titled).forEach(function (sig) { if (seenTitled[sig]) pinned.titled[sig] = true; seenTitled[sig] = true; });
+    });
+    return pinned;
+  }
+
+  function withoutPinned(signatures, pinned) {
+    var rest = signatures.filter(function (sig) { return !pinned[sig]; });
+    return rest.length ? rest : signatures; // 整页都是置顶卡片:照原样比较
   }
 
   /* ---------------- 收集:指定页码 ---------------- */
@@ -669,9 +757,9 @@
   async function collectPages(pageNumbers, range, stopWhen) {
     beginCollect();
     prepareTemplates();
-    var result = await collectPagesInner(pageNumbers, { tolerant: true, range: range, stopWhen: stopWhen || null });
+    var result = await collectPagesInner(pageNumbers, { range: range, stopWhen: stopWhen || null });
     state.lastCollectNote = result.note || null;
-    endCollect(result.message);
+    endCollect();
     // 什么都没读到:用不会自动消失的提示写明(跳过、到头等说明在排好之后一起显示,见 addRunNotes)
     if (!result.ok && !state.collectCancelled) {
       addNote({ id: "error", tone: "warn", title: t("noCardsReadTitle"), body: result.message, actions: [{ id: "dismiss", label: t("gotIt") }] });
@@ -679,11 +767,9 @@
     return result.ok;
   }
 
-  // 内核:收集指定页码(不管理 begin/end,供页码模式与日期模式共用)。返回 { ok, message, note }。
-  // opts.tolerant(只有页码模式用):列表到头 → 停下但不算失败;出错的页 → 跳过并记下。
-  // 日期模式不传 tolerant,行为和以前一样(任何一页收不到就停下报错)。
+  // 内核:收集指定页码(不管理 begin/end)。返回 { ok, message, note }。
+  // 列表到头 → 停下但不算失败;出错的页 → 跳过并记下。
   async function collectPagesInner(pageNumbers, opts) {
-    var tolerant = Boolean(opts && opts.tolerant);
     var range = (opts && opts.range) || null;
     var remaining = pageNumbers.slice();
     var suspicious = false;
@@ -702,17 +788,6 @@
       var stored = Array.from(state.pagesData.keys()).filter(function (n) {
         return range ? n >= range.from && n <= range.to : pageNumbers.indexOf(n) >= 0;
       }).sort(function (a, b) { return a - b; });
-      var message = core.pagination.describeCollectOutcome({
-        requested: pageNumbers,
-        stored: stored,
-        endedAfter: note.endedAfter,
-        duplicateOf: note.duplicateOf,
-        skipped: note.skipped,
-        gaveUpAt: note.gaveUpAt,
-        noLinkAfter: note.noLinkAfter
-      });
-      var lowNote = lowCountText(stored);
-      if (lowNote && note.endedAfter == null && note.noLinkAfter == null) message += " " + lowNote;
       if (!stored.length) {
         return {
           ok: false,
@@ -720,7 +795,7 @@
           message: t("noCardsReadBody", note.endedAfter)
         };
       }
-      return { ok: true, message: message, note: note };
+      return { ok: true, note: note };
     }
 
     // 列表到头:剩下的页都不用再读了
@@ -759,6 +834,8 @@
         continue;
       }
       rateAttempts = 0;
+      // 这种翻页写法已经成功读到过页,网站却说"没有这一页"(404/410)→ 列表到头了,不用再开后台标签页慢慢等
+      if (templateProven && isMissingPage(outcome)) { endListAt(page, null); break; }
       if (outcome.error || isSuspicious(outcome)) {
         suspicious = true;
         break;
@@ -774,8 +851,8 @@
           await sleep(300);
           continue; // 换模板重收同一页
         }
-        if (tolerant) { endListAt(page, dupPage); break; }
-        return { ok: false, message: paginationFailedText(page, dupPage) };
+        endListAt(page, dupPage);
+        break;
       }
       storePage(page, outcome.items);
       learnPageLinks(outcome.pageLinks, page);
@@ -815,12 +892,6 @@
         if (state.collectCancelled) break;
         var tabDup = tabItems.length ? looksLikeExistingPage(tabItems) : null;
         var verdict = core.pagination.classifyCollectedPage({ items: tabItems, error: tabError, noCards: tabNoCards, duplicateOf: tabDup, page: tabPage });
-        if (!tolerant && (verdict === "end" || verdict === "skip")) {
-          return {
-            ok: false,
-            message: t("pageNoCardsAfterRetry", tabPage)
-          };
-        }
         if (verdict === "end") { endListAt(tabPage, null); break; }
         if (verdict === "skip") {
           note.skipped.push(tabPage);
@@ -838,8 +909,8 @@
             setCollectProgress(t("dupRetry", { page: tabPage, dup: tabDup }));
             continue;
           }
-          if (tolerant) { endListAt(tabPage, tabDup); break; }
-          return { ok: false, message: paginationFailedText(tabPage, tabDup) };
+          endListAt(tabPage, tabDup);
+          break;
         }
         consecutiveFails = 0;
         storePage(tabPage, tabItems);
@@ -853,25 +924,7 @@
 
     var cancelled = state.collectCancelled;
     if (cancelled) return { ok: false, message: t("stoppedKept"), note: note };
-    if (tolerant) return finishTolerant();
-    return { ok: true, message: collectSummaryText(pageNumbers) };
-  }
-
-  function lowCountText(pageNumbers) {
-    var counts = pageNumbers.map(function (n) {
-      return { page: n, count: (state.pagesData.get(n) || []).length };
-    });
-    var max = 0;
-    counts.forEach(function (c) { if (c.count > max) max = c.count; });
-    var low = counts.filter(function (c) { return max >= 5 && c.count < max * 0.5; });
-    if (!low.length) return "";
-    return t("lowCount", { parts: low, max: max });
-  }
-
-  // 收齐后的诚实校验:某页数量和其他页差太多 → 明说,不静默
-  function collectSummaryText(pageNumbers) {
-    var low = lowCountText(pageNumbers);
-    return low || t("allRead");
+    return finishTolerant();
   }
 
   /* ---------------- 收集底层 ---------------- */
@@ -919,7 +972,7 @@
       }
       var html = await response.text();
       var doc = new DOMParser().parseFromString(html, "text/html");
-      var result = engine.applyRule(doc, state.rule, { pageUrl: url, page: page });
+      var result = engine.applyRule(doc, state.rule, { pageUrl: url, page: page, limits: ALL_LIMITS });
       var base = doc.createElement("base");
       base.href = url;
       doc.head.appendChild(base); // 让 a.href 按那一页的网址补全
@@ -979,51 +1032,38 @@
     return core.pagination.distinguishCollidingLinks(items.map(contentSignature), items.map(fullLink));
   }
 
+  var TAB_SILENCE_MS = 90000; // 后台读一页最多约 50 秒;这么久都没有消息 = 后台服务中断了
+
   function crawlViaTabs(entries) {
     return new Promise(function (resolve) {
       var got = {};
-      state.tabBatch = {
+      var watchdog = null;
+      function finish() {
+        clearTimeout(watchdog);
+        if (state.tabBatch === batch) state.tabBatch = null;
+        resolve(got);
+      }
+      function heard() {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(function () {
+          entries.forEach(function (entry) {
+            if (!got[entry.page]) got[entry.page] = { items: [], error: t("tabNoAnswer"), noCards: false, pageLinks: null };
+          });
+          chrome.runtime.sendMessage({ type: "card-sorter-crawl-cancel" }); // 后台若只是太慢,也让它停下,不和下一次读取混在一起
+          finish();
+        }, TAB_SILENCE_MS);
+      }
+      var batch = {
         onPage: function (message) {
+          heard();
           got[message.page] = { items: message.items || [], error: message.error || "", noCards: Boolean(message.noCards), pageLinks: message.pageLinks || null };
         },
-        onDone: function () {
-          state.tabBatch = null;
-          resolve(got);
-        }
+        onDone: finish
       };
-      chrome.runtime.sendMessage({ type: "card-sorter-crawl-tabs", urls: entries, rule: state.rule });
+      state.tabBatch = batch;
+      heard();
+      chrome.runtime.sendMessage({ type: "card-sorter-crawl-tabs", urls: entries, rule: state.rule, limits: ALL_LIMITS });
     });
-  }
-
-  function pageUrlTemplate() {
-    var anchors = document.querySelectorAll("a[href]");
-    for (var i = 0; i < anchors.length; i += 1) {
-      var text = (anchors[i].textContent || "").trim();
-      if (!/^\d{1,5}$/.test(text)) continue;
-      var pageNumber = Number(text);
-      var href = anchors[i].getAttribute("href") || "";
-      if (!href || href.charAt(0) === "#") continue;
-      try {
-        var absolute = new URL(href, location.href);
-        var keys = Array.from(absolute.searchParams.keys());
-        for (var k = 0; k < keys.length; k += 1) {
-          if (absolute.searchParams.get(keys[k]) === String(pageNumber) && /page|^p$|paged/i.test(keys[k])) {
-            var paramKey = keys[k];
-            var base = absolute.href;
-            return function (n) {
-              var next = new URL(base);
-              next.searchParams.set(paramKey, String(n));
-              return next.href;
-            };
-          }
-        }
-      } catch (e) { /* ignore */ }
-    }
-    return function (n) {
-      var next = new URL(location.href);
-      next.searchParams.set("page", String(n));
-      return next.href;
-    };
   }
 
   /* ================= 按卡片数读取 ================= */
@@ -1037,6 +1077,8 @@
    */
 
   var SCROLL_LIMITS = { maxCards: 2000, maxSeeds: 20000 };
+  // 一页卡片很多(超过默认的 400 张)时:用户同意「全部读取」后不再设上限;别的页一律读全,不悄悄少读
+  var ALL_LIMITS = { maxCards: 100000, maxSeeds: 200000 };
   var SCROLL_KEYS = { PageDown: 1, PageUp: 1, ArrowDown: 1, ArrowUp: 1, Home: 1, End: 1, " ": 1 };
 
   function cardKey(item) {
@@ -1047,7 +1089,7 @@
   async function collectPagesForCards() {
     var target = state.cardTarget;
     var from = state.currentPage;
-    var last = from + PAGE_CAP - 1;
+    var last = from + core.pageRange.MAX_PAGES_PER_RUN - 1; // 一次最多读 100 页(和按页数读取同一个上限)
     if (state.totalPages) last = Math.min(last, Math.max(from, state.totalPages));
     function counted() {
       var seen = {};
@@ -1377,12 +1419,23 @@
     return Boolean(sc && (sc.phase === "reading" || sc.phase === "paused" || sc.phase === "waiting"));
   }
 
+  var modalChoice = {}; // 弹窗两个按钮各自要做的事;只有一个「知道了」时为空
+
   function showBottomModal(n, target) {
+    openModal({ title: t("bottomModalTitle"), body1: t("bottomModalBody1", { n: n, target: target }), body2: t("bottomModalBody2") });
+  }
+
+  function openModal(opts) {
     var dialog = ui.modal;
     if (!dialog) return;
-    ui.modalTitle.textContent = t("bottomModalTitle");
-    ui.modalBody1.textContent = t("bottomModalBody1", { n: n, target: target });
-    ui.modalBody2.textContent = t("bottomModalBody2");
+    modalChoice = { ok: opts.onOk || null, cancel: opts.onCancel || null };
+    ui.modalTitle.textContent = opts.title;
+    ui.modalBody1.textContent = opts.body1 || "";
+    ui.modalBody2.textContent = opts.body2 || "";
+    ui.modalBody2.hidden = !opts.body2;
+    ui.modalOk.textContent = opts.okLabel || t("gotIt");
+    ui.modalCancel.textContent = opts.cancelLabel || "";
+    ui.modalCancel.hidden = !opts.cancelLabel;
     try {
       if (!dialog.open) dialog.showModal();
     } catch (e) {
@@ -1391,7 +1444,16 @@
     if (ui.modalOk) ui.modalOk.focus();
   }
 
+  // 关掉弹窗,当作点了「取消」
+  function dismissModal() {
+    if (!ui.modal || !ui.modal.open) return;
+    var act = modalChoice.cancel;
+    closeBottomModal();
+    if (act) act();
+  }
+
   function closeBottomModal() {
+    modalChoice = {};
     var dialog = ui.modal;
     if (dialog && dialog.open) {
       try { dialog.close(); } catch (e) { dialog.removeAttribute("open"); }
@@ -1481,12 +1543,13 @@
   }
 
   async function forgetSite() {
-    await core.rules.deleteRule(state.ruleKey);
+    await core.rules.deleteRuleForUrl(location.href);
     state.rule = null;
     state.dirty = true;
     state.sortRules = [];
     state.notes = [];
     addNote({ id: "forgot", tone: "info", title: t("resetTitle"), body: t("resetBody"), actions: [{ id: "dismiss", label: t("gotIt") }] });
+    state.pagesData.clear(); // 以前读的页按旧的设置读,作废
     detectCurrentPage();
   }
 
@@ -1501,6 +1564,7 @@
     ui.panel.scrollTop = 0;
     renderRules();
     picker.start({
+      texts: { tip: t("pickTip"), text: t("pickText"), outside: t("pickOutside"), noNumber: t("pickNoNumber"), missed: t("pickMissed") },
       onPicked: function (result) {
         state.picking = false;
         invalidateResultCache();
@@ -1512,6 +1576,7 @@
           else { state.candidates.unshift(Object.assign({}, candidate, { enabled: true })); if (!firstId) firstId = candidate.id; }
         });
         state.dirty = true;
+        rereadWithNewNumbers();
         if (firstId && forRule === NEW_RULE) addPickedRule(firstId);
         else if (firstId && forRule >= 0 && state.sortRules[forRule]) chooseField(forRule, firstId);
         else if (firstId && !state.sortRules.length) resetDefaultSortRule();
@@ -1522,6 +1587,78 @@
         renderPickBar();
       }
     });
+  }
+
+  // 已读的卡片只带着读取时认识的数字。手动加了数字后:这一页马上按新的数字重读,
+  // 其他已读的页作废,下次排序时重新读(否则那些卡片缺这个数字,排序会错)
+  function rereadWithNewNumbers() {
+    stopScrollSession();
+    rereadCurrentPage(rulesFromCandidates(), true);
+  }
+
+  // 按 rule 重读当前页;clearOthers = 别的已读页作废(下次排序时重新读)
+  function rereadCurrentPage(rule, clearOthers) {
+    var applied = engine.applyRule(document, rule, { pageUrl: location.href, page: state.currentPage, limits: state.noPaging ? SCROLL_LIMITS : currentPageLimits() });
+    if (!applied.ok) return false; // 这一页重读失败时保留原来读到的卡片,不让结果变空
+    if (clearOthers) {
+      state.pagesData.clear();
+      state.cardsLastPage = null;
+    }
+    state.cardCount = applied.cardCount;
+    state.manyCards = manyCardsOf(applied);
+    storePage(state.currentPage, applied.items);
+    return true;
+  }
+
+  function manyCardsOf(result) {
+    return result && result.truncated ? { n: result.totalCards, exact: result.totalExact !== false } : null;
+  }
+
+  function currentPageLimits() {
+    return state.allCards ? ALL_LIMITS : undefined;
+  }
+
+  function rulesFromCandidates() {
+    return {
+      cardSignature: state.cardSignature,
+      slots: state.candidates.map(function (c) { return Object.assign({}, c, { enabled: !c.excluded && c.type !== "text" }); })
+    };
+  }
+
+  // 当前页卡片超过默认上限:问用户要不要全部读取。取消 = 不读,切到「按卡片数」并让那里闪两下,
+  // 让用户知道可以自己在那里改要读多少张
+  function askReadAll(many) {
+    openModal({
+      title: many.exact ? t("manyCardsTitle", many.n) : t("manyCardsTitleOver", many.n),
+      body1: t("manyCardsBody"),
+      okLabel: t("readAll"),
+      cancelLabel: t("cancel"),
+      onOk: function () {
+        state.allCards = true;
+        invalidateResultCache();
+        rereadCurrentPage(rulesFromCandidates(), false);
+        renderAll();
+        handleAction("sort");
+      },
+      onCancel: function () {
+        if (state.readTab !== "cards") {
+          state.readTab = "cards";
+          invalidateResultCache();
+          renderRange();
+          renderCta();
+        }
+        flashCardCount();
+      }
+    });
+  }
+
+  function flashCardCount() {
+    var target = ui.rangeBox && ui.rangeBox.querySelector(".step");
+    if (!target) return;
+    target.classList.remove("flash");
+    void target.offsetWidth; // 重新开始动画
+    target.classList.add("flash");
+    target.addEventListener("animationend", function () { target.classList.remove("flash"); }, { once: true });
   }
 
   // 用户点的是已经有的属性(比如又点了下载量)→ 用已有的那一个,不新建
@@ -1561,8 +1698,9 @@
   }
 
   function buildPayload(sorted) {
-    var raw = pool().length;
-    var unique = displayPool().length;
+    var bounds = pageBounds();
+    var raw = pool(bounds).length;
+    var unique = displayPool(bounds).length;
     return {
       generatedAt: Date.now(),
       sourceUrl: location.href,
@@ -1671,7 +1809,6 @@
   }
 
   function addRunNotes(stats, count) {
-    var pagesText = core.resultView.describePageList(stats.pages);
     var requested = stats.requested;
     var pageCount = stats.pages.length;
     if (stats.skippedPages && stats.skippedPages.length) {
@@ -1861,6 +1998,7 @@
     ".mi:hover,.mi:focus-visible{background:var(--subtle);outline:none}",
     ".mi .s{color:var(--text3);font-size:12px}",
     ".fi{display:inline-block;width:1.05em;height:1.05em;vertical-align:-.17em;object-fit:contain;margin:0 .15em;color:var(--text)}",
+    "svg.fi:not([fill]){fill:currentColor}",
     ".sel .s{color:var(--text3);font-size:12px}",
     ".mi .n{min-width:0}",
     ".mi.cur{background:var(--accentSoft)}",
@@ -1868,6 +2006,9 @@
     ".mi .r{white-space:nowrap}",
     ".cov{font-size:11px;color:var(--warning);background:var(--warningSoft);border-radius:4px;padding:0 5px;white-space:nowrap}",
     ".msep{border-top:1px solid var(--border);margin:4px 0}",
+    ".xfold>summary{list-style:none;cursor:pointer;display:block;padding-bottom:7px}.xfold>summary::-webkit-details-marker{display:none}",
+    ".xfold>summary:hover{background:var(--subtle)}.xfold>summary:focus-visible{background:var(--subtle);outline:none}",
+    ".xlist{max-height:min(200px,40vh);overflow:auto}.xlist:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}",
     ".add{margin:0 0 12px}",
     ".top5{margin-top:8px;border:1px solid var(--border);border-radius:10px;background:var(--field);padding:2px 10px 8px}",
     ".div{display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:12px;color:var(--text3)}",
@@ -1918,7 +2059,15 @@
     ".ma{display:flex;justify-content:flex-end;margin-top:12px}",
     ".mok{all:unset;background:var(--button);color:var(--onAccent);border-radius:8px;padding:7px 18px;font-weight:600;cursor:pointer}",
     ".mok:hover{background:var(--buttonHover)}",
-    ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}"
+    ".mok:focus-visible{outline:2px solid var(--focus);outline-offset:2px}",
+    ".ma{gap:8px}",
+    ".mno{all:unset;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 16px;font-weight:600;cursor:pointer}",
+    ".mno:hover{background:var(--subtle)}",
+    ".mno:focus-visible{outline:2px solid var(--focus);outline-offset:2px}",
+    ".mno[hidden],.mb[hidden]{display:none}",
+    ".flash{animation:flash-twice .9s ease-in-out 2}",
+    "@keyframes flash-twice{0%,100%{box-shadow:0 0 0 3px transparent}50%{box-shadow:0 0 0 4px var(--accentSoft)}}",
+    "@media (prefers-reduced-motion:reduce){.flash{animation:none;box-shadow:0 0 0 3px var(--accentSoft)}}"
   ].join("\n");
 
   // 图标:标题栏和收起胶囊用产品图标(与 icons/icon-panel.svg 相同);「–」= 收起(线条来自 Lucide,ISC 许可),点胶囊 = 恢复
@@ -2041,8 +2190,11 @@
       '<div class="mh2" data-el="modalTitle"></div>' +
       '<p class="mb" data-el="modalBody1"></p>' +
       '<p class="mb" data-el="modalBody2"></p>' +
-      '<div class="ma"><button class="mok" data-el="modalOk">' + esc(t("gotIt")) + '</button></div>';
-    modal.querySelector(".mok").addEventListener("click", function () { closeBottomModal(); });
+      '<div class="ma"><button class="mno" data-el="modalCancel" hidden></button><button class="mok" data-el="modalOk">' + esc(t("gotIt")) + '</button></div>';
+    modal.querySelector(".mok").addEventListener("click", function () { var act = modalChoice.ok; closeBottomModal(); if (act) act(); });
+    modal.querySelector(".mno").addEventListener("click", function () { var act = modalChoice.cancel; closeBottomModal(); if (act) act(); });
+    // 按 Esc 关掉弹窗 = 取消
+    modal.addEventListener("cancel", function () { var act = modalChoice.cancel; modalChoice = {}; if (act) setTimeout(act, 0); });
     shadow.appendChild(modal);
     modal.querySelectorAll("[data-el]").forEach(function (node) { ui[node.getAttribute("data-el")] = node; });
     ui.modal = modal;
@@ -2168,11 +2320,12 @@
 
   function handleAction(act, target) {
     if (act === "theme") switchTheme();
-    else if (act === "minimize") { ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
-    else if (act === "redetect") { if (state.collecting) return; state.notes = []; detectCurrentPage(); }
+    else if (act === "minimize") { if (state.picking) stopPicking(); dismissModal(); ui.panel.style.display = "none"; ui.bubble.style.display = ""; applyPosition(); }
+    else if (act === "redetect") { if (state.collecting) return; state.notes = []; state.pagesData.clear(); detectCurrentPage(); }
     else if (act === "scrollStop") cancelCollect();
     else if (act === "stopWaiting") stopWaiting();
     else if (act === "tab") {
+      if (state.collecting) return; // 读取中不能改读取方式,否则排出来的不是用户开始时要的范围
       var tab = target.getAttribute("data-tab");
       if (tab === state.readTab) return;
       state.readTab = tab;
@@ -2190,8 +2343,8 @@
       if (state.collecting) { cancelCollect(); return; }
       // 任何一步出错都必须发声,绝不静默
       runSort().catch(function (error) {
-        var message = (error && error.message) || String(error);
-        if (state.collecting) endCollect("");
+        console.warn("[Multi-Level Sort] sort failed", error);
+        if (state.collecting) endCollect();
         addNote({ id: "error", tone: "warn", title: t("sortFailTitle"), body: t("tryAgain"), actions: [{ id: "dismiss", label: t("gotIt") }] });
       });
     }
@@ -2204,6 +2357,7 @@
       if (actionId === "retry") {
         var action = (note.actions || []).find(function (a) { return a.id === "retry"; });
         retryPages(action && action.pages).catch(function (error) {
+          console.warn("[Multi-Level Sort] retry failed", error);
           addNote({ id: "error", tone: "warn", title: t("retryFailTitle"), body: t("tryAgain"), actions: [{ id: "dismiss", label: t("gotIt") }] });
         });
       }
@@ -2379,7 +2533,6 @@
       return;
     }
     if (!state.sortRules.length) resetDefaultSortRule();
-    refreshBands();
     if (ui.addRule) {
       ui.addRule.textContent = core.sort.firstUnusedField(catalog, state.sortRules)
         ? t("addRule")
@@ -2512,9 +2665,12 @@
 
   function renderMenu(rule, index, catalog) {
     var menu = el("div", "menu");
-    menu.setAttribute("role", "listbox");
-    menu.setAttribute("aria-label", t("menuAria"));
     menu.appendChild(el("div", "mh", t("menuSortable")));
+    // 只有可选的排序项放在 listbox 里;手动选取按钮和下面的折叠区不是"选项"
+    var options = el("div", "");
+    options.setAttribute("role", "listbox");
+    options.setAttribute("aria-label", t("menuAria"));
+    menu.appendChild(options);
     catalog.forEach(function (field) {
       var item = el("button", "mi" + (field.id === rule.field ? " cur" : ""));
       item.setAttribute("role", "option");
@@ -2529,7 +2685,7 @@
       var low = field.total && field.count / field.total < 0.75;
       item.appendChild(el("span", low ? "cov r" : "s r", cov));
       item.addEventListener("click", function () { chooseField(index, field.id, catalog); });
-      menu.appendChild(item);
+      options.appendChild(item);
     });
     var pick = el("button", "mi");
     pick.appendChild(el("span", "n link", t("manualSelect")));
@@ -2538,15 +2694,34 @@
     var excluded = excludedCandidates();
     if (excluded.length) {
       menu.appendChild(el("div", "msep"));
-      menu.appendChild(el("div", "mh", t("menuNotSortable")));
+      // 不可排序项默认收起(早期版本的做法),标题带数量;展开状态只在当前页面记住,刷新后恢复收起
+      var fold = document.createElement("details");
+      fold.className = "xfold";
+      fold.open = state.notSortableOpen;
+      var head = document.createElement("summary");
+      head.className = "mh";
+      head.appendChild(document.createTextNode(t("menuNotSortableCount", excluded.length) + " "));
+      var caret = el("span", "caret", state.notSortableOpen ? "▴" : "▾");
+      caret.setAttribute("aria-hidden", "true");
+      head.appendChild(caret);
+      fold.appendChild(head);
+      var rows = el("div", "xlist");
+      rows.setAttribute("role", "list");
+      rows.setAttribute("aria-label", t("menuNotSortable"));
+      rows.tabIndex = 0;
       excluded.forEach(function (candidate) {
         var off = el("div", "mi off");
-        off.setAttribute("role", "option");
-        off.setAttribute("aria-disabled", "true");
+        off.setAttribute("role", "listitem");
         off.appendChild(el("span", "n", excludedName(candidate)));
         off.appendChild(el("span", "s", excludedReason(candidate)));
-        menu.appendChild(off);
+        rows.appendChild(off);
       });
+      fold.appendChild(rows);
+      fold.addEventListener("toggle", function () {
+        state.notSortableOpen = fold.open;
+        caret.textContent = fold.open ? "▴" : "▾";
+      });
+      menu.appendChild(fold);
     }
     return menu;
   }
@@ -2605,6 +2780,7 @@
   /* ---------------- 读取范围(F1–F4) ---------------- */
 
   function rangeAction(op, target) {
+    if (state.collecting) return; // 读取中不能改范围
     var pr = core.pageRange;
     var s = state.pageRange;
     if (op === "minus") s = pr.stepEnd(s, -1);
@@ -2614,7 +2790,11 @@
     else if (op === "this") s = pr.chooseThisPage(s);
     else if (op === "all") s = pr.chooseAll(s);
     else if (op === "fix") s = pr.resolveBefore(s, target.getAttribute("data-fix"));
-    else if (op === "editStart") { state.editingStart = !state.editingStart; renderRange(); return; }
+    else if (op === "editStart") {
+      if (!state.editingStart) { state.editingStart = true; renderRange(); return; }
+      state.editingStart = false;
+      s = pr.setStart(s, state.currentPage); // 「从这里开始」:起始页改成当前页
+    }
     state.pageRange = s;
     invalidateResultCache();
     renderRange();
@@ -2660,6 +2840,7 @@
       startInput.value = String(state.pageRange.start);
       startInput.setAttribute("aria-label", t("firstPage"));
       startInput.addEventListener("change", function () {
+        if (state.collecting) { renderRange(); return; }
         state.pageRange = core.pageRange.setStart(state.pageRange, startInput.value);
         invalidateResultCache();
         renderRange();
@@ -2732,11 +2913,6 @@
     if (state.currentPage > 1 || state.editingStart || state.pageRange.start !== state.currentPage) {
       var other = el("div", "hint");
       var link = rangeButton("link", "editStart", state.editingStart ? t("startHere") : t("setStart"), false);
-      if (state.editingStart) {
-        link.addEventListener("click", function () {
-          state.pageRange = core.pageRange.setStart(state.pageRange, state.currentPage);
-        });
-      }
       other.appendChild(link);
       box.appendChild(other);
     }
@@ -2803,6 +2979,7 @@
   }
 
   function cardsAction(op, target) {
+    if (state.collecting) return;
     var sr = core.scrollReader;
     if (op === "minus") setCardTarget(sr.stepTarget(state.cardTarget, -sr.CARD_TARGET_STEP));
     else if (op === "plus") setCardTarget(sr.stepTarget(state.cardTarget, sr.CARD_TARGET_STEP));
@@ -2810,6 +2987,7 @@
   }
 
   function setCardTarget(value) {
+    if (state.collecting) { renderRange(); return; }
     state.cardTarget = value;
     invalidateResultCache();
     renderRange();
@@ -2817,6 +2995,7 @@
   }
 
   function applyTypedEnd(text) {
+    if (state.collecting) { renderRange(); return; }
     state.pageRange = core.pageRange.typeEnd(state.pageRange, text);
     invalidateResultCache();
     renderRange();
