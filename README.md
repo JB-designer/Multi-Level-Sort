@@ -83,6 +83,8 @@ Data export is not currently supported.
 
 Found a problem? Report it on [GitHub Issues](https://github.com/JB-designer/Multi-Level-Sort/issues).
 
+Changelog: [CHANGELOG.md](CHANGELOG.md)
+
 ## License
 
 Source code is licensed under MIT. See [`LICENSE`](LICENSE) for details.
@@ -173,6 +175,8 @@ Source code is licensed under MIT. See [`LICENSE`](LICENSE) for details.
 ## 反馈问题
 
 发现问题？欢迎通过 [GitHub Issues](https://github.com/JB-designer/Multi-Level-Sort/issues) 反馈。
+
+更新记录：[CHANGELOG.md](CHANGELOG.md)
 
 ## 许可证
 
