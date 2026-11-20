@@ -1117,7 +1117,7 @@
     if (!element) return null;
     var tag = (element.tagName || "").toLowerCase();
     if (tag === "svg") {
-      var markup = svgMarkup(element, element.ownerDocument, 0);
+      var markup = svgMarkup(element, element.ownerDocument, 0, null, true);
       return markup && markup.length <= ICON_MARKUP_MAX && /<(path|circle|ellipse|rect|line|polyline|polygon)\b/.test(markup)
         ? { kind: "svg", markup: markup }
         : null;
@@ -1143,23 +1143,51 @@
     return null;
   }
 
-  function svgMarkup(element, doc, depth) {
+  // 网站常用 CSS 给图标上色/去色,复制时 CSS 会丢:没写 fill/stroke 属性的图形,
+  // 按原页面上实际算出来的样式补上"不填色"或"描边",让线框图标在面板里仍是线框,不会变成实心一块。
+  // 返回 "none"、"paint",读不到时返回 ""(不补)。
+  function livePaint(element, prop) {
+    var view = element.ownerDocument && element.ownerDocument.defaultView;
+    if (!view || !view.getComputedStyle) return "";
+    var value = String((view.getComputedStyle(element) || {})[prop] || "").trim();
+    if (!value) return "";
+    return /^none$/i.test(value) ? "none" : "paint";
+  }
+
+  // inherited:复制品里父元素已有的 { fill, stroke } 状态("paint"/"none");live:能否读原页面样式
+  function svgMarkup(element, doc, depth, inherited, live) {
     if (depth > 12) return "";
+    inherited = inherited || { fill: "paint", stroke: "none" };
+    if (live === undefined) live = true;
     var tag = (element.tagName || "").toLowerCase();
-    if (tag === "use") return useMarkup(element, doc, depth);
+    if (tag === "use") return useMarkup(element, doc, depth, inherited, live);
     if (tag === "symbol") tag = "g";
     if (!SVG_TAGS.test(tag)) return "";
     var attrs = [];
+    var own = { fill: inherited.fill, stroke: inherited.stroke };
+    var hasAttr = {};
     var list = element.attributes || [];
     for (var i = 0; i < list.length; i += 1) {
       var name = String(list[i].name).toLowerCase();
       var value = String(list[i].value);
       if (tag === "svg" && (name === "x" || name === "y")) continue;
       if (name === "fill" || name === "stroke") {
-        attrs.push(name + '="' + (/^none$/i.test(value) ? "none" : "currentColor") + '"');
+        var none = /^none$/i.test(value);
+        attrs.push(name + '="' + (none ? "none" : "currentColor") + '"');
+        own[name] = none ? "none" : "paint";
+        hasAttr[name] = true;
       } else if (SVG_ATTRS.test(name) && /^[\w\s.,#%()\-]*$/.test(value)) {
         attrs.push((name === "viewbox" ? "viewBox" : name) + '="' + value + '"');
       }
+    }
+    if (live) {
+      ["fill", "stroke"].forEach(function (prop) {
+        if (hasAttr[prop]) return;
+        var paint = livePaint(element, prop);
+        if (!paint || paint === inherited[prop]) return;
+        attrs.push(prop + '="' + (paint === "none" ? "none" : "currentColor") + '"');
+        own[prop] = paint;
+      });
     }
     if (tag === "svg" && !/viewBox=/.test(attrs.join(" "))) {
       var w = Number(element.getAttribute("width"));
@@ -1169,7 +1197,7 @@
     var inner = "";
     var child = element.firstElementChild;
     while (child) {
-      inner += svgMarkup(child, doc, depth + 1);
+      inner += svgMarkup(child, doc, depth + 1, own, live);
       child = child.nextElementSibling;
     }
     if (tag === "svg") return '<svg xmlns="http://www.w3.org/2000/svg"' + (attrs.length ? " " + attrs.join(" ") : "") + ">" + inner + "</svg>";
@@ -1177,12 +1205,25 @@
   }
 
   // <use href="#icon-download"> 引用页面里的图标合集:把被引用的那个图形抄过来
-  function useMarkup(element, doc, depth) {
+  // 被引用的图形在图标合集里,原页面上算出的样式属于合集而不是这个图标,所以里面只认写明的属性;
+  // <use> 自己身上的去色/描边(属性或 CSS)包在外层 <g> 上传下去。
+  function useMarkup(element, doc, depth, inherited, live) {
     var ref = element.getAttribute("href") || element.getAttribute("xlink:href") || "";
     if (!/^#[\w\-:.]+$/.test(ref) || !doc || !doc.getElementById) return "";
     var target = doc.getElementById(ref.slice(1));
     if (!target) return "";
-    var markup = svgMarkup(target, doc, depth + 1);
+    inherited = inherited || { fill: "paint", stroke: "none" };
+    var own = { fill: inherited.fill, stroke: inherited.stroke };
+    var wrap = [];
+    ["fill", "stroke"].forEach(function (prop) {
+      var attr = element.getAttribute(prop);
+      var paint = attr ? (/^none$/i.test(attr) ? "none" : "paint") : live ? livePaint(element, prop) : "";
+      if (!paint || paint === inherited[prop]) return;
+      wrap.push(prop + '="' + (paint === "none" ? "none" : "currentColor") + '"');
+      own[prop] = paint;
+    });
+    var markup = svgMarkup(target, doc, depth + 1, own, false);
+    if (wrap.length) markup = "<g " + wrap.join(" ") + ">" + markup + "</g>";
     var box = target.getAttribute && target.getAttribute("viewBox");
     return box && (target.tagName || "").toLowerCase() === "symbol"
       ? '<svg viewBox="' + box.replace(/[^\d\s.,\-]/g, "") + '">' + markup + "</svg>"

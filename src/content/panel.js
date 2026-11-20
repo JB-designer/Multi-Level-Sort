@@ -1998,6 +1998,7 @@
     ".mi:hover,.mi:focus-visible{background:var(--subtle);outline:none}",
     ".mi .s{color:var(--text3);font-size:12px}",
     ".fi{display:inline-block;width:1.05em;height:1.05em;vertical-align:-.17em;object-fit:contain;margin:0 .15em;color:var(--text)}",
+    "svg.fi:not([fill]){fill:currentColor}",
     ".sel .s{color:var(--text3);font-size:12px}",
     ".mi .n{min-width:0}",
     ".mi.cur{background:var(--accentSoft)}",
